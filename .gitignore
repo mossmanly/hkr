@@ -1,0 +1,12 @@
+# Python virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+
+# dbt local artifacts
+.dbt/
+logs/
+
+# OS files
+.DS_Store
