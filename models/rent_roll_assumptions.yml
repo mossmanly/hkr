@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: rent_roll_assumptions
+    description: "Calculates rent per square foot for each unit"
+    columns:
+      - name: property_id
+        description: "The unique ID of the property"
+        tests:
+          - not_null
+      - name: unit_number
+        description: "The unit number within the property"
+        tests:
+          - not_null
+          - unique
+      - name: rent_amount
+        description: "Monthly rent amount"
+        tests:
+          - not_null
+      - name: square_feet
+        description: "Leasable area in square feet"
+        tests:
+          - not_null
+      - name: rent_per_sqft
+        description: "Rent amount divided by square feet"
+        tests:
+          - expression_is_true: "rent_per_sqft > 0"
