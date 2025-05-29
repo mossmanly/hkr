@@ -24,4 +24,5 @@ models:
       - name: rent_per_sqft
         description: "Rent amount divided by square feet"
         tests:
-          - expression_is_true: "rent_per_sqft > 0"
+      - expression_is_true:
+        expression: "rent_per_sqft > 0"
