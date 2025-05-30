@@ -16,10 +16,10 @@ models:
       - name: acquisition_year
         description: "Year the property was acquired"
         tests: [not_null]
-      - name: unit_number
+      - name: unit_count
         description: "The unit count per property"
         tests: [not_null]
-      - name: rent_amount
+      - name: avg_rent
         description: "The average rent per unit"
         tests: [not_null]
       - name: turnover_rate
