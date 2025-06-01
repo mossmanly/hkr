@@ -5,6 +5,11 @@
 name: 'hkr'
 version: '1.0.0'
 
+# Link this local repo to your Cloud project
+dbt-cloud:
+  project-id: 70471823473114
+
+
 # This setting configures which "profile" dbt uses for this project.
 profile: 'hkr'
 
@@ -34,3 +39,8 @@ models:
     # Config indicated by + and applies to all files under models/example/
     example:
       +materialized: view
+# Seed configurations
+seeds:
+  hkr:                       # your project name
+    rent_roll_assumptions:   # CSV filename WITHOUT the .csv
+      header: true

@@ -1,0 +1,5 @@
+﻿company_id,portfolio_id,property_id,acquisition_year,unit_count,avg_rent_per_unit,init_turn_rate,norm_turn_rate,cola_snap,norm_snap,reno_snap,mtm_snap
+1,Micro-1,P1,1,33,1377,0.3,0.15,0.03,0.05,0.09,0.07
+1,Micro-1,P2,1,36,1277,0.3,0.15,0.03,0.05,0.1,0.07
+1,Micro-1,P3,1,24,1317,0.3,0.15,0.03,0.05,0.11,0.07
+1,Micro-1,P4,1,30,1245,0.3,0.15,0.03,0.05,0.12,0.07
