@@ -2,32 +2,15 @@ version: 2
 
 models:
   - name: rent_roll_assumptions
-    description: "A clean rent‐roll view with standardized column names"
+    description: "Forecasts annualized rent per property using COLA and turnover-based logic"
     columns:
-      - name: company_id
-        description: "The owning company ID"
-        tests: [not_null]
-      - name: portfolio_id
-        description: "The portfolio identifier"
-        tests: [not_null]
       - name: property_id
-        description: "The unique property ID"
         tests: [not_null]
-      - name: acquisition_year
-        description: "Year the property was acquired"
+      - name: year
         tests: [not_null]
       - name: unit_count
-        description: "The unit count per property"
         tests: [not_null]
-      - name: avg_rent
-        description: "The average rent per unit"
+      - name: avg_rent_per_unit
         tests: [not_null]
-      - name: turnover_rate
-        description: "Occupancy turnover rate"
-        tests: [not_null]
-      - name: turnover_rate_bump
-        description: "Adjustment bump applied to turnover rate"
-        tests: [not_null]
-      - name: rent_growth_rate
-        description: "Annual rent growth rate"
+      - name: annual_rent
         tests: [not_null]

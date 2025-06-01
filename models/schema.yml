@@ -1,0 +1,97 @@
+version: 2
+
+sources:
+  - name: inputs
+    description: >
+      Input tables containing baseline assumptions for each property.
+    schema: inputs
+    tables:
+      - name: property_inputs
+        description: >
+          Table containing property-level acquisition assumptions, LTV, and refi year inputs.
+        columns:
+          - name: property_id
+            description: Unique ID for the property
+          - name: purchase_price
+            description: Purchase price of the property
+          - name: ds_ltv
+            description: Debt service loan-to-value ratio
+          - name: ds_int
+            description: Interest rate for original loan
+          - name: ds_term
+            description: Term (years) of original loan
+          - name: capex_per_unit
+            description: CapEx assumption per unit
+          - name: unit_count
+            description: Total units for the property
+          - name: avg_rent_per_unit
+            description: Average monthly rent per unit at acquisition
+          - name: opex_ratio
+            description: OpEx ratio applied to EGI
+          - name: vacancy_rate
+            description: Vacancy rate assumption
+          - name: collections_loss_rate
+            description: Bad debt / collection loss rate
+          - name: ds_refi_year
+            description: Year refinance is modeled to occur
+          - name: ds_refi_ltv
+            description: LTV to apply at refinance
+          - name: ds_refi_int
+            description: Interest rate at refinance
+          - name: ds_refi_term
+            description: Term (years) of the refi loan
+
+      - name: capex_factors
+        description: >
+          Table of year-by-year CapEx multipliers per property summing to 1.00 across 20 years.
+        columns:
+          - name: property_id
+            description: ID of the property
+          - name: year
+            description: Portfolio year number
+          - name: capex_factor
+            description: Fraction of total CapEx applied in this year (0 to 1.0)
+
+models:
+  - name: refi_outcomes
+    description: >
+      One row per property containing refinance proceeds calculated as
+      property_value * ds_ltv in the year of refinancing.
+    columns:
+      - name: property_id
+        description: Unique ID of the property
+      - name: refi_year
+        description: Year in which the refinance occurs
+      - name: property_value
+        description: Estimated property value in the refi year
+      - name: ds_ltv
+        description: Debt Service Loan-to-Value ratio (from input assumptions)
+      - name: refi_proceeds
+        description: Refinance proceeds based on LTV and property value
+      - name: refi_annual_ds
+        description: Annual debt service amount for the refi loan
+      - name: original_loan_balance
+        description: Outstanding loan balance at time of refi
+      - name: refi_loan_amount
+        description: New loan amount issued at refi
+
+  - name: fact_property_cash_flow
+    description: >
+      Annual property-level cash flow including refinance proceeds in the refi year.
+    columns:
+      - name: property_id
+        description: Unique ID of the property
+      - name: year
+        description: Portfolio year
+      - name: pgi
+        description: Potential Gross Income
+      - name: egi
+        description: Effective Gross Income (after vacancy and collection loss)
+      - name: noi
+        description: Net Operating Income
+      - name: debt_service
+        description: Annual debt service
+      - name: refi_proceeds
+        description: Refi proceeds (non-zero only in refi year)
+      - name: atcf
+        description: After-tax cash flow, including refi proceeds where applicable
