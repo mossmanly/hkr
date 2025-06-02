@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: tbl_waterfall_main
+    columns:
+      - name: distributable_cash
+        tests: [not_null]
+      - name: pref_roc
+        tests: [not_null]
+      - name: pref_irr
+        tests: [not_null]
+      - name: common_roc
+        tests: [not_null]
+      - name: common_irr
+        tests: [not_null]

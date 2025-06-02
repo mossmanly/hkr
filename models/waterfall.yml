@@ -1,0 +1,44 @@
+version: 2
+
+models:
+  - name: tbl_waterfall
+    description: >
+      Pooled cash distribution logic by portfolio and year. 
+      Includes ROC, preferred return, hurdle tiers, and sponsor splits.
+    columns:
+      - name: company_id
+        description: Company that owns the portfolio.
+      - name: portfolio_id
+        description: Unique identifier for the portfolio (e.g. MP1).
+      - name: year
+        description: Fiscal year of the distribution.
+      - name: distributable_cash
+        description: Sum of ATCF from all properties in the portfolio for the year.
+      - name: roc
+        description: Return of capital distributed to common investors in the year.
+      - name: base_pref_irr
+        description: Weighted average base preferred IRR for the portfolio.
+      - name: distributable_profit
+        description: Distributable cash remaining after ROC.
+      - name: hurdle1_total
+        description: Total cash in first promote tier.
+      - name: hurdle1_common
+        description: Portion of hurdle1 paid to common investors.
+      - name: hurdle1_sponsor
+        description: Portion of hurdle1 paid to sponsor.
+      - name: hurdle2_common
+        description: Portion of hurdle2 paid to common investors.
+      - name: hurdle2_sponsor
+        description: Portion of hurdle2 paid to sponsor.
+      - name: hurdle3_common
+        description: Portion of hurdle3 paid to common investors.
+      - name: hurdle3_sponsor
+        description: Portion of hurdle3 paid to sponsor.
+      - name: residual_common
+        description: Cash remaining after all hurdles, paid to common investors.
+      - name: residual_sponsor
+        description: Cash remaining after all hurdles, paid to sponsor.
+      - name: common_total
+        description: Total received by common investors across all tiers.
+      - name: sponsor_total
+        description: Total received by sponsor across all tiers.
