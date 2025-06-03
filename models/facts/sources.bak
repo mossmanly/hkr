@@ -1,0 +1,37 @@
+version: 2
+
+sources:
+  # ─────────────────────────────────────────────────────────────
+  #  Primary schema with live investor data & lookup tables
+  # ─────────────────────────────────────────────────────────────
+  - name: hkh_dev
+    description: "Main schema with live inputs, terms, and lookup tables"
+    schema: hkh_dev              # <-- database schema name
+
+    tables:
+      # Investor capital & return terms
+      - name: tbl_terms
+        description: >
+          Investor-level terms for equity contributions, preferred IRR,
+          and class-based distribution logic (Preferred vs Common).
+
+      # Promote / hurdle lookup
+      - name: tbl_hurdle_tiers
+        description: >
+          Lookup table defining each promote hurdle:
+            • irr_range_high – IRR ceiling for the tier  
+            • common_share   – % of profit to common investors  
+            • sponsor_share  – % of profit to sponsor  
+
+  # ─────────────────────────────────────────────────────────────
+  #  Seed / input schema used by other models (e.g. refi_outcomes)
+  # ─────────────────────────────────────────────────────────────
+  - name: inputs
+    description: "Schema containing property-level input seeds"
+    schema: inputs               # <-- adjust if the table lives elsewhere
+
+    tables:
+      - name: property_inputs
+        description: >
+          Static property acquisition and operating assumptions
+          used by several downstream models.
