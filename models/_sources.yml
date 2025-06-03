@@ -1,22 +1,14 @@
 version: 2
 
 sources:
-  # ──────────────────────────────
-  #  Live schema
-  # ──────────────────────────────
-  - name: hkh_dev           # first arg in source()
-    schema: hkh_dev         # Postgres schema
-
+  - name: hkh_dev
+    schema: hkh_dev
     tables:
       - name: tbl_terms
       - name: tbl_hurdle_tiers
 
-  # ──────────────────────────────
-  #  Seed / input schema
-  # ──────────────────────────────
-  - name: inputs            # first arg in source()
-    schema: inputs          # ← this is where *property_inputs* & *capex_factors* sit
-
+  - name: inputs
+    schema: inputs
     tables:
       - name: property_inputs
       - name: capex_factors
