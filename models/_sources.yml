@@ -3,12 +3,15 @@ version: 2
 sources:
   - name: hkh_dev
     schema: hkh_dev
+    database: hkh_decision_support_db
     tables:
       - name: tbl_terms
       - name: tbl_hurdle_tiers
+      - name: property
 
   - name: inputs
     schema: inputs
+    database: hkh_decision_support_db
     tables:
       - name: property_inputs
       - name: capex_factors
