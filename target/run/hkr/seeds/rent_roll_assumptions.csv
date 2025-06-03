@@ -1,0 +1,14 @@
+
+    
+    
+    
+    create table "hkh_decision_support_db"."hkr_dbt"."rent_roll_assumptions" ("company_id" integer,"portfolio_id" text,"property_id" text,"acquisition_year" integer,"unit_count" integer,"avg_rent_per_unit" integer,"turnover_rate" float8,"turnover_rate_bump" float8,"rent_growth_rate" float8)
+  ;
+    -- dbt seed --
+    
+          insert into "hkh_decision_support_db"."hkr_dbt"."rent_roll_assumptions" ("company_id", "portfolio_id", "property_id", "acquisition_year", "unit_count", "avg_rent_per_unit", "turnover_rate", "turnover_rate_bump", "rent_growth_rate") values
+          (%s,%s,%s,%s,%s,%s,%s,%s,%s),(%s,%s,%s,%s,%s,%s,%s,%s,%s),(%s,%s,%s,%s,%s,%s,%s,%s,%s),(%s,%s,%s,%s,%s,%s,%s,%s,%s)
+      
+
+;
+  

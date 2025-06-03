@@ -1,0 +1,5 @@
+﻿company_id,portfolio_id,property_id,acquisition_year,unit_count,avg_rent_per_unit,turnover_rate,turnover_rate_bump,rent_growth_rate
+1,Micro-1,P1,1,33,1377,0.3,0.09,0.03
+2,Micro-1,P2,1,36,1277,0.4,0.1,0.03
+3,Micro-1,P3,1,24,1317,0.5,0.11,0.03
+4,Micro-1,P4,1,30,1245,0.6,0.12,0.03
