@@ -1,0 +1,11 @@
+-- models/dim_years.sql
+
+with years as (
+    select generate_series(1, 20) as year
+)
+
+select 
+    year,
+    'Year ' || year as year_label,
+    year - 1 as year_offset
+from years

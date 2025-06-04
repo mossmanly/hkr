@@ -1,0 +1,66 @@
+version: 2
+
+models:
+  - name: tbl_waterfall_main
+    description: >
+      Portfolio-level waterfall by year. Includes
+      • preferred ROC + IRR (preferred tranche)
+      • common ROC + IRR (common tranche)
+      • promote split driven by tbl_hurdle_tiers
+      • running weighted-average investor IRR
+
+    columns:
+      - name: company_id
+        description: Company identifier (e.g. "hkh").
+
+      - name: portfolio_id
+        description: Unique portfolio slug (e.g. "MP1").
+
+      - name: year
+        description: Fiscal or projection year (0 = closing year).
+
+      - name: distributable_cash
+        description: Sum of ATCF from all properties in the portfolio for the year.
+
+      # ── Preferred tranche ──────────────────────────
+      - name: pref_roc
+        description: Return of capital paid to preferred investors this year.
+
+      - name: pref_irr
+        description: Preferred IRR paid to preferred investors this year.
+
+      # ── Common tranche ─────────────────────────────
+      - name: common_roc
+        description: Return of capital paid to common investors this year.
+
+      - name: common_irr
+        description: Preferred IRR paid to common investors this year.
+
+      # ── Promote / hurdle split ─────────────────────
+      - name: hurdle1_common
+        description: Portion of promote tier (per tbl_hurdle_tiers) paid to common investors.
+
+      - name: hurdle1_sponsor
+        description: Portion of promote tier paid to sponsor.
+
+      # Place-holders for future tiers (currently zeroes)
+      - name: hurdle1_total
+        description: Deprecated legacy column (kept for compatibility).
+
+      - name: hurdle2_common
+      - name: hurdle2_sponsor
+      - name: hurdle3_common
+      - name: hurdle3_sponsor
+      - name: residual_common
+      - name: residual_sponsor
+
+      # ── Convenience totals ─────────────────────────
+      - name: common_total
+        description: Total paid to common investors in this year (common_roc + common_irr + hurdle1_common).
+
+      - name: sponsor_total
+        description: Total paid to sponsor in this year (hurdle1_sponsor).
+
+      # ── Diagnostics ───────────────────────────────
+      - name: wtd_running_irr
+        description: Running weighted-average investor IRR through this year (diagnostic column).

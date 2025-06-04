@@ -1,0 +1,45 @@
+version: 2
+
+models:
+  - name: refi_outcomes
+    description: >
+      One row per property containing refinance proceeds calculated as
+      property_value * ds_ltv in the year of refinancing.
+    columns:
+      - name: property_id
+        description: Unique ID of the property
+      - name: refi_year
+        description: Year in which the refinance occurs
+      - name: property_value
+        description: Estimated property value in the refi year
+      - name: ds_ltv
+        description: Debt Service Loan-to-Value ratio (from input assumptions)
+      - name: refi_proceeds
+        description: Refinance proceeds based on LTV and property value
+      - name: refi_annual_ds
+        description: Annual debt service amount for the refi loan
+      - name: original_loan_balance
+        description: Outstanding loan balance at time of refi
+      - name: refi_loan_amount
+        description: New loan amount issued at refi
+
+  - name: fact_property_cash_flow
+    description: >
+      Annual property-level cash flow including refinance proceeds in the refi year.
+    columns:
+      - name: property_id
+        description: Unique ID of the property
+      - name: year
+        description: Portfolio year
+      - name: pgi
+        description: Potential Gross Income
+      - name: egi
+        description: Effective Gross Income (after vacancy and collection loss)
+      - name: noi
+        description: Net Operating Income
+      - name: debt_service
+        description: Annual debt service
+      - name: refi_proceeds
+        description: Refi proceeds (non-zero only in refi year)
+      - name: atcf
+        description: After-tax cash flow, including refinance proceeds where applicable
