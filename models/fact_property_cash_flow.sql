@@ -68,6 +68,7 @@ refi AS (
 )
 
 SELECT
+    'micro-1' AS portfolio_id,  -- Added portfolio_id column
     pc.property_id,
     pc.year,
     pc.pgi,

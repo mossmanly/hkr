@@ -1,292 +1,494 @@
-{{ config(materialized='view') }}
--- ----------------------------------------------------------------------------------
--- Complete Real Estate Waterfall Model - WORKING VERSION
--- Handles: Preferred ROC/IRR → Common ROC/IRR → Hurdle Tiers → Residual
--- ----------------------------------------------------------------------------------
+{{
+  config(
+    materialized='view'
+  )
+}}
 
-WITH
+WITH 
 --------------------------------------------------------------------------------
--- Equity classes and their weighted average IRRs
+-- Get hurdle tiers configuration
 --------------------------------------------------------------------------------
-equity_classes AS (
-  SELECT
-    LOWER(portfolio_id) AS portfolio_id,
-    equity_class,
-    SUM(equity_contributed * base_pref_irr) / SUM(equity_contributed) AS weighted_avg_irr,
-    SUM(equity_contributed) AS total_equity
-  FROM "hkh_decision_support_db"."hkh_dev"."tbl_terms"
-  WHERE equity_class IN ('Preferred', 'Common')
-  GROUP BY LOWER(portfolio_id), equity_class
-),
-
---------------------------------------------------------------------------------
--- Hurdle structure
---------------------------------------------------------------------------------
-hurdles AS (
+hurdle_tiers AS (
   SELECT
     hurdle_id,
-    irr_range_high AS hurdle_irr,
-    common_share,
-    sponsor_share,
-    CASE 
-      WHEN hurdle_id = 'hurdle1' THEN 1
-      WHEN hurdle_id = 'hurdle2' THEN 2  
-      WHEN hurdle_id = 'hurdle3' THEN 3
-      WHEN hurdle_id = 'residual' THEN 4
-    END AS tier_order,
-    LAG(irr_range_high, 1, 0) OVER (ORDER BY 
-      CASE 
-        WHEN hurdle_id = 'hurdle1' THEN 1
-        WHEN hurdle_id = 'hurdle2' THEN 2
-        WHEN hurdle_id = 'hurdle3' THEN 3  
-        WHEN hurdle_id = 'residual' THEN 4
-      END
-    ) AS prior_hurdle_irr
-  FROM "hkh_decision_support_db"."hkh"."tbl_hurdle_tiers"
+    irr_range_high,
+    common_share AS investor_share,
+    sponsor_share
+  FROM hkh_dev.tbl_hurdle_tiers
 ),
 
 --------------------------------------------------------------------------------
--- Portfolio cash by year
+-- Calculate target IRR threshold (weighted average across all investors)
 --------------------------------------------------------------------------------
-cash_flows AS (
+target_irr_threshold AS (
   SELECT
-    LOWER(pi.portfolio_id) AS portfolio_id,
-    fpf.year,
-    SUM(fpf.atcf) AS annual_cash_flow,
-    SUM(SUM(fpf.atcf)) OVER (
-      PARTITION BY LOWER(pi.portfolio_id) 
-      ORDER BY fpf.year 
-      ROWS UNBOUNDED PRECEDING
-    ) AS cumulative_cash_flow
-  FROM "hkh_decision_support_db"."hkh_dev"."fact_property_cash_flow" AS fpf
-  JOIN "hkh_decision_support_db"."inputs"."property_inputs" AS pi
-    ON fpf.property_id = pi.property_id
-  GROUP BY LOWER(pi.portfolio_id), fpf.year
+    portfolio_id,
+    SUM(target_irr * equity_contributed) / SUM(equity_contributed) AS weighted_avg_target_irr
+  FROM hkh_dev.tbl_terms
+  GROUP BY portfolio_id
 ),
 
 --------------------------------------------------------------------------------
--- Main waterfall calculation
+-- Get portfolio terms (aggregate once)
 --------------------------------------------------------------------------------
-waterfall_base AS (
+portfolio_terms AS (
+  SELECT
+    t.portfolio_id,
+    SUM(CASE WHEN t.equity_class = 'Preferred' THEN t.equity_contributed ELSE 0 END) AS total_pref_equity,
+    SUM(CASE WHEN t.equity_class = 'Common' THEN t.equity_contributed ELSE 0 END) AS total_common_equity,
+    SUM(t.equity_contributed) AS total_equity,
+    
+    -- Weighted average base IRR for common investors
+    CASE WHEN SUM(CASE WHEN t.equity_class = 'Common' THEN t.equity_contributed ELSE 0 END) > 0 THEN
+      SUM(CASE WHEN t.equity_class = 'Common' THEN t.base_pref_irr * t.equity_contributed ELSE 0 END) / 
+      SUM(CASE WHEN t.equity_class = 'Common' THEN t.equity_contributed ELSE 0 END)
+    ELSE 0.07 END AS weighted_avg_base_irr,
+    
+    -- Join target IRR threshold
+    tit.weighted_avg_target_irr
+    
+  FROM hkh_dev.tbl_terms t
+  JOIN target_irr_threshold tit ON t.portfolio_id = tit.portfolio_id
+  GROUP BY t.portfolio_id, tit.weighted_avg_target_irr
+),
+
+--------------------------------------------------------------------------------
+-- Base cash flows aggregated by portfolio and year
+--------------------------------------------------------------------------------
+base_data AS (
   SELECT
     cf.portfolio_id,
     cf.year,
-    cf.annual_cash_flow,
-    cf.cumulative_cash_flow,
+    SUM(cf.atcf) AS total_cash_flow,  -- Aggregate cash flows by year
+    pt.total_pref_equity,
+    pt.total_common_equity,
+    pt.total_equity,
+    pt.weighted_avg_base_irr,
+    pt.weighted_avg_target_irr
     
-    -- Equity amounts
-    COALESCE(pref.total_equity, 0) AS pref_equity,
-    COALESCE(common.total_equity, 0) AS common_equity,
-    COALESCE(pref.total_equity, 0) + COALESCE(common.total_equity, 0) AS total_equity,
-    
-    -- IRR targets
-    COALESCE(pref.weighted_avg_irr, 0) AS pref_target_irr,
-    COALESCE(common.weighted_avg_irr, 0) AS common_target_irr,
-    
-    -- Current portfolio IRR (simplified as cumulative cash / total equity)
-    CASE 
-      WHEN COALESCE(pref.total_equity, 0) + COALESCE(common.total_equity, 0) > 0
-      THEN cf.cumulative_cash_flow / (COALESCE(pref.total_equity, 0) + COALESCE(common.total_equity, 0))
-      ELSE 0 
-    END AS current_portfolio_multiple
-
-  FROM cash_flows cf
-  LEFT JOIN equity_classes pref 
-    ON cf.portfolio_id = pref.portfolio_id AND pref.equity_class = 'Preferred'
-  LEFT JOIN equity_classes common 
-    ON cf.portfolio_id = common.portfolio_id AND common.equity_class = 'Common'
+  FROM {{ ref('fact_property_cash_flow') }} cf
+  JOIN portfolio_terms pt ON cf.portfolio_id = pt.portfolio_id
+  GROUP BY cf.portfolio_id, cf.year, pt.total_pref_equity, pt.total_common_equity, pt.total_equity, pt.weighted_avg_base_irr, pt.weighted_avg_target_irr
 ),
 
 --------------------------------------------------------------------------------
--- Calculate cumulative distributions needed for each class
+-- Add cumulative tracking
 --------------------------------------------------------------------------------
-distributions_needed AS (
+cumulative_base AS (
   SELECT
-    *,
-    -- Preferred total return needed (ROC + IRR)
-    pref_equity * (1 + pref_target_irr) AS pref_total_needed,
+    bd.*,
     
-    -- Common total return needed (ROC + IRR) 
-    common_equity * (1 + common_target_irr) AS common_total_needed,
-    
-    -- Cumulative preferred distributions needed through this year
-    SUM(pref_equity * (1 + pref_target_irr)) OVER (
-      PARTITION BY portfolio_id 
-      ORDER BY year 
+    -- Cumulative cash flow by portfolio
+    SUM(bd.total_cash_flow) OVER (
+      PARTITION BY bd.portfolio_id 
+      ORDER BY bd.year 
       ROWS UNBOUNDED PRECEDING
-    ) AS cum_pref_needed,
+    ) AS cumulative_cash_flow
     
-    -- Cumulative common distributions needed through this year
-    SUM(common_equity * (1 + common_target_irr)) OVER (
-      PARTITION BY portfolio_id 
-      ORDER BY year 
-      ROWS UNBOUNDED PRECEDING  
-    ) AS cum_common_needed
-
-  FROM waterfall_base
+  FROM base_data bd
 ),
 
 --------------------------------------------------------------------------------
--- Final waterfall distribution
+-- Calculate preferred ROC payments first
 --------------------------------------------------------------------------------
-final_waterfall AS (
+pref_roc_step AS (
   SELECT
-    portfolio_id,
-    year,
-    annual_cash_flow,
+    cb.*,
     
-    -- Step 1: Pay Preferred first
+    -- Preferred capital already returned in prior years
+    GREATEST(0, LEAST(
+      COALESCE(
+        LAG(cb.cumulative_cash_flow, 1, 0) OVER (
+          PARTITION BY cb.portfolio_id ORDER BY cb.year
+        ), 0
+      ),
+      cb.total_pref_equity
+    )) AS pref_roc_already_paid,
+    
+    -- Preferred ROC payment this period
+    GREATEST(0, LEAST(
+      cb.total_cash_flow,
+      cb.total_pref_equity - GREATEST(0, LEAST(
+        COALESCE(
+          LAG(cb.cumulative_cash_flow, 1, 0) OVER (
+            PARTITION BY cb.portfolio_id ORDER BY cb.year
+          ), 0
+        ),
+        cb.total_pref_equity
+      ))
+    )) AS pref_roc_paid
+    
+  FROM cumulative_base cb
+),
+
+--------------------------------------------------------------------------------
+-- Add LAG values for preferred calculations
+--------------------------------------------------------------------------------
+pref_lag_step AS (
+  SELECT
+    prs.*,
+    LAG(prs.pref_roc_already_paid + prs.pref_roc_paid, 1, 0) OVER (
+      PARTITION BY prs.portfolio_id ORDER BY prs.year
+    ) AS prev_total_pref_roc_paid,
+    LAG(prs.total_cash_flow, 1, 0) OVER (
+      PARTITION BY prs.portfolio_id ORDER BY prs.year
+    ) AS prev_total_cash_flow,
+    LAG(prs.pref_roc_paid, 1, 0) OVER (
+      PARTITION BY prs.portfolio_id ORDER BY prs.year
+    ) AS prev_pref_roc_paid
+  FROM pref_roc_step prs
+),
+
+--------------------------------------------------------------------------------
+-- Calculate preferred IRR accrual and payments
+--------------------------------------------------------------------------------
+pref_irr_step AS (
+  SELECT
+    pls.*,
+    
+    -- Preferred capital outstanding
+    GREATEST(0, pls.total_pref_equity - pls.pref_roc_already_paid - pls.pref_roc_paid) AS pref_capital_outstanding,
+    
+    -- Is preferred ROC complete?
+    CASE WHEN (pls.pref_roc_already_paid + pls.pref_roc_paid) >= pls.total_pref_equity THEN 1 ELSE 0 END AS pref_roc_complete,
+    
+    -- Simplified IRR accrual - 8% on initial preferred equity for each year
+    pls.total_pref_equity * 0.08 * pls.year AS total_pref_irr_target,
+    
+    -- IRR already paid in prior periods (simplified)
+    COALESCE(
+      SUM(
+        CASE WHEN pls.prev_total_pref_roc_paid >= pls.total_pref_equity THEN
+          GREATEST(0, pls.prev_total_cash_flow - pls.prev_pref_roc_paid)
+        ELSE 0 END
+      ) OVER (
+        PARTITION BY pls.portfolio_id 
+        ORDER BY pls.year 
+        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+      ), 0
+    ) AS pref_irr_already_paid,
+    
+    -- Cash available for preferred IRR this period
+    GREATEST(0, pls.total_cash_flow - pls.pref_roc_paid) AS cash_after_pref_roc
+    
+  FROM pref_lag_step pls
+),
+
+--------------------------------------------------------------------------------
+-- Calculate actual preferred IRR payment
+--------------------------------------------------------------------------------
+pref_final AS (
+  SELECT
+    pis.*,
+    
+    -- Preferred IRR payment this period
     CASE 
-      WHEN cumulative_cash_flow <= cum_pref_needed 
-      THEN annual_cash_flow
-      WHEN cumulative_cash_flow - annual_cash_flow < cum_pref_needed
-      THEN cum_pref_needed - (cumulative_cash_flow - annual_cash_flow)
+      WHEN pis.pref_roc_complete = 1 THEN
+        GREATEST(0, LEAST(
+          pis.cash_after_pref_roc,
+          pis.total_pref_irr_target - pis.pref_irr_already_paid
+        ))
       ELSE 0
-    END AS pref_distribution,
+    END AS pref_irr_paid,
     
-    -- Step 2: Pay Common second  
-    CASE
-      WHEN cumulative_cash_flow <= cum_pref_needed THEN 0
-      WHEN cumulative_cash_flow <= cum_pref_needed + cum_common_needed
-      THEN LEAST(
-        annual_cash_flow - CASE 
-          WHEN cumulative_cash_flow <= cum_pref_needed THEN annual_cash_flow
-          WHEN cumulative_cash_flow - annual_cash_flow < cum_pref_needed
-          THEN cum_pref_needed - (cumulative_cash_flow - annual_cash_flow)
-          ELSE 0
-        END,
-        (cum_pref_needed + cum_common_needed) - (cumulative_cash_flow - annual_cash_flow)
-      )
-      ELSE common_equity * (1 + common_target_irr)
-    END AS common_distribution,
-    
-    -- Step 3: Remaining cash for promote/hurdles
+    -- Cash remaining for common
     GREATEST(0, 
-      annual_cash_flow 
-      - CASE 
-          WHEN cumulative_cash_flow <= cum_pref_needed 
-          THEN annual_cash_flow
-          WHEN cumulative_cash_flow - annual_cash_flow < cum_pref_needed
-          THEN cum_pref_needed - (cumulative_cash_flow - annual_cash_flow)
-          ELSE 0
-        END
-      - CASE
-          WHEN cumulative_cash_flow <= cum_pref_needed THEN 0
-          WHEN cumulative_cash_flow <= cum_pref_needed + cum_common_needed
-          THEN LEAST(
-            annual_cash_flow - CASE 
-              WHEN cumulative_cash_flow <= cum_pref_needed THEN annual_cash_flow
-              WHEN cumulative_cash_flow - annual_cash_flow < cum_pref_needed 
-              THEN cum_pref_needed - (cumulative_cash_flow - annual_cash_flow)
-              ELSE 0
-            END,
-            (cum_pref_needed + cum_common_needed) - (cumulative_cash_flow - annual_cash_flow)
-          )
-          ELSE common_equity * (1 + common_target_irr)
-        END
-    ) AS promote_pool,
+      pis.total_cash_flow - pis.pref_roc_paid - 
+      CASE 
+        WHEN pis.pref_roc_complete = 1 THEN
+          GREATEST(0, LEAST(
+            pis.cash_after_pref_roc,
+            pis.total_pref_irr_target - pis.pref_irr_already_paid
+          ))
+        ELSE 0
+      END
+    ) AS cash_for_common
     
-    current_portfolio_multiple,
-    pref_equity,
-    common_equity,
-    total_equity
-
-  FROM distributions_needed
+  FROM pref_irr_step pis
 ),
 
 --------------------------------------------------------------------------------
--- Apply hurdle tier splits to promote pool
+-- Add LAG values for common calculations
 --------------------------------------------------------------------------------
-hurdle_splits AS (
+common_lag_step AS (
   SELECT
-    fw.*,
-    
-    -- Hurdle 1 (up to 8%)
-    CASE 
-      WHEN current_portfolio_multiple <= 0.08 THEN promote_pool * 0.7
-      WHEN current_portfolio_multiple > 0.08 THEN promote_pool * 0.08 / current_portfolio_multiple * 0.7
-      ELSE 0
-    END AS h1_common,
-    
-    CASE 
-      WHEN current_portfolio_multiple <= 0.08 THEN promote_pool * 0.3
-      WHEN current_portfolio_multiple > 0.08 THEN promote_pool * 0.08 / current_portfolio_multiple * 0.3  
-      ELSE 0
-    END AS h1_sponsor,
-    
-    -- Hurdle 2 (8% to 12%)
-    CASE
-      WHEN current_portfolio_multiple <= 0.08 THEN 0
-      WHEN current_portfolio_multiple <= 0.12 THEN promote_pool * ((current_portfolio_multiple - 0.08) / current_portfolio_multiple) * 0.6
-      WHEN current_portfolio_multiple > 0.12 THEN promote_pool * (0.04 / current_portfolio_multiple) * 0.6
-      ELSE 0  
-    END AS h2_common,
-    
-    CASE
-      WHEN current_portfolio_multiple <= 0.08 THEN 0
-      WHEN current_portfolio_multiple <= 0.12 THEN promote_pool * ((current_portfolio_multiple - 0.08) / current_portfolio_multiple) * 0.4
-      WHEN current_portfolio_multiple > 0.12 THEN promote_pool * (0.04 / current_portfolio_multiple) * 0.4
-      ELSE 0
-    END AS h2_sponsor,
-    
-    -- Hurdle 3 (12% to 18%)  
-    CASE
-      WHEN current_portfolio_multiple <= 0.12 THEN 0
-      WHEN current_portfolio_multiple <= 0.18 THEN promote_pool * ((current_portfolio_multiple - 0.12) / current_portfolio_multiple) * 0.5
-      WHEN current_portfolio_multiple > 0.18 THEN promote_pool * (0.06 / current_portfolio_multiple) * 0.5
-      ELSE 0
-    END AS h3_common,
-    
-    CASE  
-      WHEN current_portfolio_multiple <= 0.12 THEN 0
-      WHEN current_portfolio_multiple <= 0.18 THEN promote_pool * ((current_portfolio_multiple - 0.12) / current_portfolio_multiple) * 0.5
-      WHEN current_portfolio_multiple > 0.18 THEN promote_pool * (0.06 / current_portfolio_multiple) * 0.5
-      ELSE 0
-    END AS h3_sponsor,
-    
-    -- Residual (above 18%)
-    CASE
-      WHEN current_portfolio_multiple <= 0.18 THEN 0  
-      ELSE promote_pool * ((current_portfolio_multiple - 0.18) / current_portfolio_multiple) * 0.35
-    END AS residual_common,
-    
-    CASE
-      WHEN current_portfolio_multiple <= 0.18 THEN 0
-      ELSE promote_pool * ((current_portfolio_multiple - 0.18) / current_portfolio_multiple) * 0.65  
-    END AS residual_sponsor
+    pf.*,
+    LAG(pf.pref_capital_outstanding, 1, pf.total_pref_equity) OVER (
+      PARTITION BY pf.portfolio_id ORDER BY pf.year
+    ) AS prev_pref_capital_outstanding_common_lag,
+    LAG(pf.cash_for_common, 1, 0) OVER (
+      PARTITION BY pf.portfolio_id ORDER BY pf.year
+    ) AS prev_cash_for_common_common_lag
+  FROM pref_final pf
+),
 
-  FROM final_waterfall fw
+--------------------------------------------------------------------------------
+-- Calculate common ROC payments
+--------------------------------------------------------------------------------
+common_roc_step AS (
+  SELECT
+    cls.*,
+    
+    -- Common capital already returned
+    COALESCE(
+      SUM(
+        CASE WHEN cls.prev_pref_capital_outstanding_common_lag = 0 THEN
+          GREATEST(0, LEAST(cls.prev_cash_for_common_common_lag, cls.total_common_equity))
+        ELSE 0 END
+      ) OVER (
+        PARTITION BY cls.portfolio_id 
+        ORDER BY cls.year 
+        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+      ), 0
+    ) AS common_roc_already_paid,
+    
+    -- Common ROC payment this period
+    CASE 
+      WHEN cls.pref_capital_outstanding = 0 THEN
+        GREATEST(0, LEAST(
+          cls.cash_for_common,
+          cls.total_common_equity - COALESCE(
+            SUM(
+              CASE WHEN cls.prev_pref_capital_outstanding_common_lag = 0 THEN
+                GREATEST(0, LEAST(cls.prev_cash_for_common_common_lag, cls.total_common_equity))
+              ELSE 0 END
+            ) OVER (
+              PARTITION BY cls.portfolio_id 
+              ORDER BY cls.year 
+              ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ), 0
+          )
+        ))
+      ELSE 0
+    END AS common_roc_paid
+    
+  FROM common_lag_step cls
+),
+
+--------------------------------------------------------------------------------
+-- Add more LAG values for common IRR calculations
+--------------------------------------------------------------------------------
+common_irr_lag_step AS (
+  SELECT
+    crs.*,
+    
+    -- Is common ROC complete?
+    CASE WHEN (crs.common_roc_already_paid + crs.common_roc_paid) >= crs.total_common_equity 
+         AND crs.pref_capital_outstanding = 0 
+    THEN 1 ELSE 0 END AS common_roc_complete,
+    
+    -- Cash remaining after common ROC
+    GREATEST(0, crs.cash_for_common - crs.common_roc_paid) AS cash_after_common_roc,
+    
+    -- Common IRR accrual calculation - simple annual IRR
+    CASE 
+      WHEN (crs.common_roc_already_paid + crs.common_roc_paid) >= crs.total_common_equity 
+           AND crs.pref_capital_outstanding = 0 THEN
+        GREATEST(0, 
+          crs.total_common_equity * crs.weighted_avg_base_irr * 
+          (crs.year - 1)  -- Years elapsed since year 1
+        )
+      ELSE 0
+    END AS total_common_irr_target,
+    
+    -- LAG values for IRR payment tracking  
+    LAG(crs.common_roc_already_paid + crs.common_roc_paid, 1, 0) OVER (
+      PARTITION BY crs.portfolio_id ORDER BY crs.year
+    ) AS prev_total_common_roc_paid_irr_lag,
+    LAG(crs.pref_capital_outstanding, 1, crs.total_pref_equity) OVER (
+      PARTITION BY crs.portfolio_id ORDER BY crs.year
+    ) AS prev_pref_capital_outstanding_irr_lag,
+    LAG(crs.cash_for_common - crs.common_roc_paid, 1, 0) OVER (
+      PARTITION BY crs.portfolio_id ORDER BY crs.year
+    ) AS prev_cash_after_common_roc_irr_lag
+    
+  FROM common_roc_step crs
+),
+
+--------------------------------------------------------------------------------
+-- Calculate common IRR and hurdle payments
+--------------------------------------------------------------------------------
+final_calculations AS (
+  SELECT
+    cils.*,
+    
+    -- Common IRR already paid in prior periods
+    COALESCE(
+      SUM(
+        CASE WHEN cils.prev_total_common_roc_paid_irr_lag >= cils.total_common_equity 
+        AND cils.prev_pref_capital_outstanding_irr_lag = 0 THEN
+          GREATEST(0, cils.prev_cash_after_common_roc_irr_lag)
+        ELSE 0 END
+      ) OVER (
+        PARTITION BY cils.portfolio_id 
+        ORDER BY cils.year 
+        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+      ), 0
+    ) AS common_irr_already_paid
+    
+  FROM common_irr_lag_step cils
+),
+
+--------------------------------------------------------------------------------
+-- Calculate actual common IRR payment
+--------------------------------------------------------------------------------
+common_irr_step AS (
+  SELECT
+    fc.*,
+    
+    -- Common IRR payment this period (only after ROC complete)
+    CASE 
+      WHEN fc.common_roc_complete = 1 THEN
+        GREATEST(0, LEAST(
+          fc.cash_after_common_roc,
+          fc.total_common_irr_target - fc.common_irr_already_paid
+        ))
+      ELSE 0
+    END AS common_irr_paid
+    
+  FROM final_calculations fc
+),
+
+--------------------------------------------------------------------------------
+-- Calculate hurdle payments with complete tier structure
+--------------------------------------------------------------------------------
+waterfall_final AS (
+  SELECT
+    cis.*,
+    ht1.irr_range_high AS hurdle1_irr_threshold,
+    ht1.investor_share AS hurdle1_investor_share,
+    ht1.sponsor_share AS hurdle1_sponsor_share,
+    ht2.irr_range_high AS hurdle2_irr_threshold,
+    ht2.investor_share AS hurdle2_investor_share,
+    ht2.sponsor_share AS hurdle2_sponsor_share,
+    ht3.irr_range_high AS hurdle3_irr_threshold,
+    ht3.investor_share AS hurdle3_investor_share,
+    ht3.sponsor_share AS hurdle3_sponsor_share,
+    htr.investor_share AS residual_investor_share,
+    htr.sponsor_share AS residual_sponsor_share,
+    
+    -- Cash available for hurdles
+    GREATEST(0, cis.cash_after_common_roc - cis.common_irr_paid) AS cash_for_hurdles,
+    
+    -- Calculate cumulative IRR achieved (simple, not compounding)
+    CASE WHEN cis.total_equity > 0 THEN
+      (cis.cumulative_cash_flow / cis.total_equity - 1) / GREATEST(1, cis.year - 1)
+    ELSE 0 END AS cumulative_irr_achieved,
+    
+    -- Check if target IRR threshold has been met
+    CASE WHEN cis.common_roc_complete = 1 AND 
+         CASE WHEN cis.total_equity > 0 THEN
+           (cis.cumulative_cash_flow / cis.total_equity - 1) / GREATEST(1, cis.year - 1)
+         ELSE 0 END >= cis.weighted_avg_target_irr
+    THEN 1 ELSE 0 END AS target_irr_met
+    
+  FROM common_irr_step cis
+  CROSS JOIN (SELECT * FROM hurdle_tiers WHERE hurdle_id = 'hurdle1') ht1
+  CROSS JOIN (SELECT * FROM hurdle_tiers WHERE hurdle_id = 'hurdle2') ht2  
+  CROSS JOIN (SELECT * FROM hurdle_tiers WHERE hurdle_id = 'hurdle3') ht3
+  CROSS JOIN (SELECT * FROM hurdle_tiers WHERE hurdle_id = 'residual') htr
+),
+
+--------------------------------------------------------------------------------
+-- Calculate actual hurdle distributions
+--------------------------------------------------------------------------------
+hurdle_distributions AS (
+  SELECT
+    wf.*,
+    
+    -- If target IRR met, all remaining cash goes to sponsor
+    CASE WHEN wf.target_irr_met = 1 THEN
+      wf.cash_for_hurdles
+    ELSE 0 END AS target_irr_excess_to_sponsor,
+    
+    -- Cash available if target IRR not met
+    CASE WHEN wf.target_irr_met = 0 THEN wf.cash_for_hurdles ELSE 0 END AS cash_for_hurdle_tiers,
+    
+    -- Hurdle 1 calculations (only if target IRR not met)
+    CASE WHEN wf.target_irr_met = 0 AND wf.common_roc_complete = 1 AND wf.cumulative_irr_achieved <= wf.hurdle1_irr_threshold THEN
+      GREATEST(0, wf.cash_for_hurdles * wf.hurdle1_investor_share)
+    ELSE 0 END AS hurdle1_investor_calc,
+    
+    CASE WHEN wf.target_irr_met = 0 AND wf.common_roc_complete = 1 AND wf.cumulative_irr_achieved <= wf.hurdle1_irr_threshold THEN
+      GREATEST(0, wf.cash_for_hurdles * wf.hurdle1_sponsor_share)
+    ELSE 0 END AS hurdle1_sponsor_calc,
+    
+    -- Cash remaining after hurdle 1
+    CASE WHEN wf.target_irr_met = 0 AND wf.common_roc_complete = 1 AND wf.cumulative_irr_achieved > wf.hurdle1_irr_threshold THEN
+      wf.cash_for_hurdles
+    ELSE 0 END AS cash_after_hurdle1,
+    
+    -- Hurdle 2 calculations
+    CASE WHEN wf.target_irr_met = 0 AND wf.common_roc_complete = 1 AND wf.cumulative_irr_achieved > wf.hurdle1_irr_threshold AND wf.cumulative_irr_achieved <= wf.hurdle2_irr_threshold THEN
+      GREATEST(0, wf.cash_for_hurdles * wf.hurdle2_investor_share)
+    ELSE 0 END AS hurdle2_investor_calc,
+    
+    CASE WHEN wf.target_irr_met = 0 AND wf.common_roc_complete = 1 AND wf.cumulative_irr_achieved > wf.hurdle1_irr_threshold AND wf.cumulative_irr_achieved <= wf.hurdle2_irr_threshold THEN
+      GREATEST(0, wf.cash_for_hurdles * wf.hurdle2_sponsor_share)
+    ELSE 0 END AS hurdle2_sponsor_calc,
+    
+    -- Cash remaining after hurdle 2
+    CASE WHEN wf.target_irr_met = 0 AND wf.common_roc_complete = 1 AND wf.cumulative_irr_achieved > wf.hurdle2_irr_threshold THEN
+      wf.cash_for_hurdles
+    ELSE 0 END AS cash_after_hurdle2,
+    
+    -- Hurdle 3 calculations
+    CASE WHEN wf.target_irr_met = 0 AND wf.common_roc_complete = 1 AND wf.cumulative_irr_achieved > wf.hurdle2_irr_threshold AND wf.cumulative_irr_achieved <= wf.hurdle3_irr_threshold THEN
+      GREATEST(0, wf.cash_for_hurdles * wf.hurdle3_investor_share)
+    ELSE 0 END AS hurdle3_investor_calc,
+    
+    CASE WHEN wf.target_irr_met = 0 AND wf.common_roc_complete = 1 AND wf.cumulative_irr_achieved > wf.hurdle2_irr_threshold AND wf.cumulative_irr_achieved <= wf.hurdle3_irr_threshold THEN
+      GREATEST(0, wf.cash_for_hurdles * wf.hurdle3_sponsor_share)
+    ELSE 0 END AS hurdle3_sponsor_calc,
+    
+    -- Residual calculations (anything above hurdle 3)
+    CASE WHEN wf.target_irr_met = 0 AND wf.common_roc_complete = 1 AND wf.cumulative_irr_achieved > wf.hurdle3_irr_threshold THEN
+      GREATEST(0, wf.cash_for_hurdles * wf.residual_investor_share)
+    ELSE 0 END AS residual_investor_calc,
+    
+    CASE WHEN wf.target_irr_met = 0 AND wf.common_roc_complete = 1 AND wf.cumulative_irr_achieved > wf.hurdle3_irr_threshold THEN
+      GREATEST(0, wf.cash_for_hurdles * wf.residual_sponsor_share)
+    ELSE 0 END AS residual_sponsor_calc
+    
+  FROM waterfall_final wf
 )
 
+--------------------------------------------------------------------------------
+-- Final clean output without helper columns
+--------------------------------------------------------------------------------
 SELECT
   portfolio_id,
   year,
-  annual_cash_flow,
+  ROUND(total_cash_flow, 2) AS total_cash_flow,
   
-  -- Core distributions
-  ROUND(pref_distribution, 2) AS pref_total,
-  ROUND(common_distribution, 2) AS common_total,
+  -- Preferred distributions
+  ROUND(pref_roc_paid, 2) AS pref_roc_paid,
+  ROUND(pref_irr_paid, 2) AS pref_irr_paid,
+  ROUND(pref_roc_paid + pref_irr_paid, 2) AS pref_total,
+  
+  -- Common distributions  
+  ROUND(common_roc_paid, 2) AS common_roc_paid,
+  ROUND(common_irr_paid, 2) AS common_irr_paid,
   
   -- Hurdle distributions
-  ROUND(h1_common, 2) AS h1_common,
-  ROUND(h1_sponsor, 2) AS h1_sponsor, 
-  ROUND(h2_common, 2) AS h2_common,
-  ROUND(h2_sponsor, 2) AS h2_sponsor,
-  ROUND(h3_common, 2) AS h3_common,
-  ROUND(h3_sponsor, 2) AS h3_sponsor,
-  ROUND(residual_common, 2) AS residual_common,
-  ROUND(residual_sponsor, 2) AS residual_sponsor,
+  ROUND(hurdle1_investor_calc, 2) AS hurdle1_investor,
+  ROUND(hurdle1_sponsor_calc, 2) AS hurdle1_sponsor,
+  ROUND(hurdle2_investor_calc, 2) AS hurdle2_investor,
+  ROUND(hurdle2_sponsor_calc, 2) AS hurdle2_sponsor,
+  ROUND(hurdle3_investor_calc, 2) AS hurdle3_investor,
+  ROUND(hurdle3_sponsor_calc, 2) AS hurdle3_sponsor,
+  ROUND(residual_investor_calc, 2) AS residual_investor,
+  ROUND(residual_sponsor_calc + target_irr_excess_to_sponsor, 2) AS residual_sponsor,
   
-  -- Totals for verification
-  ROUND(pref_distribution + common_distribution + h1_common + h1_sponsor + 
-        h2_common + h2_sponsor + h3_common + h3_sponsor + 
-        residual_common + residual_sponsor, 2) AS total_distributed,
+  -- Party totals (ALL distributions)
+  ROUND(pref_roc_paid + pref_irr_paid + common_roc_paid + common_irr_paid + hurdle1_investor_calc + hurdle2_investor_calc + hurdle3_investor_calc + residual_investor_calc, 2) AS total_investor,
+  ROUND(hurdle1_sponsor_calc + hurdle2_sponsor_calc + hurdle3_sponsor_calc + residual_sponsor_calc + target_irr_excess_to_sponsor, 2) AS total_sponsor,
   
-  -- Portfolio metrics
-  ROUND(current_portfolio_multiple, 4) AS portfolio_multiple,
-  pref_equity,
-  common_equity,
-  total_equity
-
-FROM hurdle_splits
+  -- Validation
+  ROUND(pref_roc_paid + pref_irr_paid + common_roc_paid + common_irr_paid + 
+        hurdle1_investor_calc + hurdle1_sponsor_calc + hurdle2_investor_calc + hurdle2_sponsor_calc +
+        hurdle3_investor_calc + hurdle3_sponsor_calc + residual_investor_calc + residual_sponsor_calc + 
+        target_irr_excess_to_sponsor, 2) AS total_distributed
+  
+FROM hurdle_distributions
 ORDER BY portfolio_id, year
