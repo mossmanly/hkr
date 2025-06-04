@@ -1,17 +1,30 @@
 version: 2
 
 sources:
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  #  Source:  hkh_dev.<table_name>
+  #  (all tables here live in schema "hkh_dev" of database "hkh_decision_support_db")
+  # ──────────────────────────────────────────────────────────────────────────────
   - name: hkh_dev
-    schema: hkh_dev
     database: hkh_decision_support_db
+    schema: hkh_dev
     tables:
       - name: tbl_terms
       - name: tbl_hurdle_tiers
-      - name: property
+      - name: fact_property_cash_flow
+      # (If you have any other tables under hkh_dev that you reference, list them here)
+      # - name: another_table_in_hkh_dev
 
+  # ──────────────────────────────────────────────────────────────────────────────
+  #  Source:  inputs.<table_name>
+  #  (all tables here live in schema "inputs" of database "hkh_decision_support_db")
+  # ──────────────────────────────────────────────────────────────────────────────
   - name: inputs
-    schema: inputs
     database: hkh_decision_support_db
+    schema: inputs
     tables:
       - name: property_inputs
       - name: capex_factors
+      # (If you have any other tables under inputs that you reference, list them here)
+      # - name: some_other_input_table
