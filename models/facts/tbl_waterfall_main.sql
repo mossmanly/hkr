@@ -1,320 +1,292 @@
 {{ config(materialized='view') }}
 -- ----------------------------------------------------------------------------------
--- Complete Real Estate Waterfall Model
--- 
--- Processes cash flows through the full waterfall structure:
--- 1. Preferred ROC + IRR
--- 2. Common ROC + IRR  
--- 3. Hurdle tiers with promote splits
--- 4. Residual splits
---
--- Outputs clean buckets for distribution to individual investors
+-- Complete Real Estate Waterfall Model - WORKING VERSION
+-- Handles: Preferred ROC/IRR → Common ROC/IRR → Hurdle Tiers → Residual
 -- ----------------------------------------------------------------------------------
 
 WITH
 --------------------------------------------------------------------------------
--- FOUNDATION: Get investor terms and cash flows
+-- Equity classes and their weighted average IRRs
 --------------------------------------------------------------------------------
-investor_terms AS (
+equity_classes AS (
   SELECT
     LOWER(portfolio_id) AS portfolio_id,
     equity_class,
-    SUM(equity_contributed) AS total_equity_by_class,
-    -- Weighted average IRR by class
-    SUM(equity_contributed * base_pref_irr) / SUM(equity_contributed) AS weighted_avg_irr
-  FROM {{ ref('hkh_dev', 'tbl_terms') }}
+    SUM(equity_contributed * base_pref_irr) / SUM(equity_contributed) AS weighted_avg_irr,
+    SUM(equity_contributed) AS total_equity
+  FROM "hkh_decision_support_db"."hkh_dev"."tbl_terms"
   WHERE equity_class IN ('Preferred', 'Common')
   GROUP BY LOWER(portfolio_id), equity_class
 ),
 
-portfolio_cash AS (
+--------------------------------------------------------------------------------
+-- Hurdle structure
+--------------------------------------------------------------------------------
+hurdles AS (
+  SELECT
+    hurdle_id,
+    irr_range_high AS hurdle_irr,
+    common_share,
+    sponsor_share,
+    CASE 
+      WHEN hurdle_id = 'hurdle1' THEN 1
+      WHEN hurdle_id = 'hurdle2' THEN 2  
+      WHEN hurdle_id = 'hurdle3' THEN 3
+      WHEN hurdle_id = 'residual' THEN 4
+    END AS tier_order,
+    LAG(irr_range_high, 1, 0) OVER (ORDER BY 
+      CASE 
+        WHEN hurdle_id = 'hurdle1' THEN 1
+        WHEN hurdle_id = 'hurdle2' THEN 2
+        WHEN hurdle_id = 'hurdle3' THEN 3  
+        WHEN hurdle_id = 'residual' THEN 4
+      END
+    ) AS prior_hurdle_irr
+  FROM "hkh_decision_support_db"."hkh"."tbl_hurdle_tiers"
+),
+
+--------------------------------------------------------------------------------
+-- Portfolio cash by year
+--------------------------------------------------------------------------------
+cash_flows AS (
   SELECT
     LOWER(pi.portfolio_id) AS portfolio_id,
     fpf.year,
-    SUM(fpf.atcf) AS total_cash_flow
-  FROM {{ ref('hkh_dev','fact_property_cash_flow') }} AS fpf
-  JOIN {{ source('inputs', 'property_inputs') }} AS pi
+    SUM(fpf.atcf) AS annual_cash_flow,
+    SUM(SUM(fpf.atcf)) OVER (
+      PARTITION BY LOWER(pi.portfolio_id) 
+      ORDER BY fpf.year 
+      ROWS UNBOUNDED PRECEDING
+    ) AS cumulative_cash_flow
+  FROM "hkh_decision_support_db"."hkh_dev"."fact_property_cash_flow" AS fpf
+  JOIN "hkh_decision_support_db"."inputs"."property_inputs" AS pi
     ON fpf.property_id = pi.property_id
   GROUP BY LOWER(pi.portfolio_id), fpf.year
 ),
 
-hurdle_tiers AS (
+--------------------------------------------------------------------------------
+-- Main waterfall calculation
+--------------------------------------------------------------------------------
+waterfall_base AS (
   SELECT
-    hurdle_id,
-    irr_range_high,
-    common_share,
-    sponsor_share
-  FROM {{ ref('hkh_dev','tbl_hurdle_tiers') }}
-),
-
---------------------------------------------------------------------------------
--- STEP 1: Calculate cumulative returns and remaining balances
---------------------------------------------------------------------------------
-investor_balances AS (
-  SELECT
-    pc.portfolio_id,
-    pc.year,
-    pc.total_cash_flow,
+    cf.portfolio_id,
+    cf.year,
+    cf.annual_cash_flow,
+    cf.cumulative_cash_flow,
     
-    -- Preferred class totals
-    COALESCE(pref.total_equity_by_class, 0) AS pref_total_equity,
-    COALESCE(pref.weighted_avg_irr, 0) AS pref_weighted_irr,
+    -- Equity amounts
+    COALESCE(pref.total_equity, 0) AS pref_equity,
+    COALESCE(common.total_equity, 0) AS common_equity,
+    COALESCE(pref.total_equity, 0) + COALESCE(common.total_equity, 0) AS total_equity,
     
-    -- Common class totals  
-    COALESCE(comm.total_equity_by_class, 0) AS common_total_equity,
-    COALESCE(comm.weighted_avg_irr, 0) AS common_weighted_irr,
+    -- IRR targets
+    COALESCE(pref.weighted_avg_irr, 0) AS pref_target_irr,
+    COALESCE(common.weighted_avg_irr, 0) AS common_target_irr,
     
-    -- Total equity for IRR calculations
-    COALESCE(pref.total_equity_by_class, 0) + COALESCE(comm.total_equity_by_class, 0) AS total_equity,
-    
-    -- Cumulative cash distributed so far (for IRR calculations)
-    SUM(pc.total_cash_flow) OVER (
-      PARTITION BY pc.portfolio_id 
-      ORDER BY pc.year 
-      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-    ) AS cumulative_cash_distributed,
-    
-    -- Cumulative cash available for this year
-    SUM(pc.total_cash_flow) OVER (
-      PARTITION BY pc.portfolio_id 
-      ORDER BY pc.year 
-      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-    ) AS cash_available
-    
-  FROM portfolio_cash AS pc
-  LEFT JOIN investor_terms AS pref 
-    ON pc.portfolio_id = pref.portfolio_id AND pref.equity_class = 'Preferred'
-  LEFT JOIN investor_terms AS comm 
-    ON pc.portfolio_id = comm.portfolio_id AND comm.equity_class = 'Common'
-),
-
---------------------------------------------------------------------------------
--- STEP 2: Calculate what each tier is owed (cumulative targets)
---------------------------------------------------------------------------------
-tier_targets AS (
-  SELECT
-    *,
-    
-    -- Preferred targets (ROC + IRR)
-    pref_total_equity AS pref_roc_target,
-    pref_total_equity * (1 + pref_weighted_irr) AS pref_total_target,
-    
-    -- Common targets (ROC + IRR) 
-    common_total_equity AS common_roc_target,
-    common_total_equity * (1 + common_weighted_irr) AS common_total_target,
-    
-    -- Current portfolio IRR (simplified as cash/equity ratio)
+    -- Current portfolio IRR (simplified as cumulative cash / total equity)
     CASE 
-      WHEN total_equity > 0 
-      THEN (cumulative_cash_distributed / total_equity) - 1
+      WHEN COALESCE(pref.total_equity, 0) + COALESCE(common.total_equity, 0) > 0
+      THEN cf.cumulative_cash_flow / (COALESCE(pref.total_equity, 0) + COALESCE(common.total_equity, 0))
       ELSE 0 
-    END AS current_portfolio_irr
-    
-  FROM investor_balances
+    END AS current_portfolio_multiple
+
+  FROM cash_flows cf
+  LEFT JOIN equity_classes pref 
+    ON cf.portfolio_id = pref.portfolio_id AND pref.equity_class = 'Preferred'
+  LEFT JOIN equity_classes common 
+    ON cf.portfolio_id = common.portfolio_id AND common.equity_class = 'Common'
 ),
 
 --------------------------------------------------------------------------------
--- STEP 3: Track cumulative payments to each tier
+-- Calculate cumulative distributions needed for each class
 --------------------------------------------------------------------------------
-cumulative_payments AS (
+distributions_needed AS (
   SELECT
     *,
+    -- Preferred total return needed (ROC + IRR)
+    pref_equity * (1 + pref_target_irr) AS pref_total_needed,
     
-    -- Cumulative preferred payments so far
-    COALESCE(
-      SUM(
-        LEAST(cash_available, pref_total_target)
-      ) OVER (
-        PARTITION BY portfolio_id 
-        ORDER BY year 
-        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-      ), 0
-    ) AS cum_pref_paid_prior,
+    -- Common total return needed (ROC + IRR) 
+    common_equity * (1 + common_target_irr) AS common_total_needed,
     
-    -- Cumulative common payments so far  
-    COALESCE(
-      SUM(
-        GREATEST(0, 
-          LEAST(
-            cash_available - LEAST(cash_available, pref_total_target),
-            common_total_target
-          )
-        )
-      ) OVER (
-        PARTITION BY portfolio_id 
-        ORDER BY year 
-        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-      ), 0
-    ) AS cum_common_paid_prior
+    -- Cumulative preferred distributions needed through this year
+    SUM(pref_equity * (1 + pref_target_irr)) OVER (
+      PARTITION BY portfolio_id 
+      ORDER BY year 
+      ROWS UNBOUNDED PRECEDING
+    ) AS cum_pref_needed,
     
-  FROM tier_targets
+    -- Cumulative common distributions needed through this year
+    SUM(common_equity * (1 + common_target_irr)) OVER (
+      PARTITION BY portfolio_id 
+      ORDER BY year 
+      ROWS UNBOUNDED PRECEDING  
+    ) AS cum_common_needed
+
+  FROM waterfall_base
 ),
 
 --------------------------------------------------------------------------------
--- STEP 4: Calculate this year's waterfall distributions
+-- Final waterfall distribution
 --------------------------------------------------------------------------------
-waterfall_calc AS (
+final_waterfall AS (
   SELECT
     portfolio_id,
     year,
-    total_cash_flow,
-    cash_available,
-    current_portfolio_irr,
+    annual_cash_flow,
     
-    -- TIER 1: Preferred payments this year
-    GREATEST(0,
-      LEAST(
-        total_cash_flow,
-        GREATEST(0, pref_total_target - cum_pref_paid_prior)
+    -- Step 1: Pay Preferred first
+    CASE 
+      WHEN cumulative_cash_flow <= cum_pref_needed 
+      THEN annual_cash_flow
+      WHEN cumulative_cash_flow - annual_cash_flow < cum_pref_needed
+      THEN cum_pref_needed - (cumulative_cash_flow - annual_cash_flow)
+      ELSE 0
+    END AS pref_distribution,
+    
+    -- Step 2: Pay Common second  
+    CASE
+      WHEN cumulative_cash_flow <= cum_pref_needed THEN 0
+      WHEN cumulative_cash_flow <= cum_pref_needed + cum_common_needed
+      THEN LEAST(
+        annual_cash_flow - CASE 
+          WHEN cumulative_cash_flow <= cum_pref_needed THEN annual_cash_flow
+          WHEN cumulative_cash_flow - annual_cash_flow < cum_pref_needed
+          THEN cum_pref_needed - (cumulative_cash_flow - annual_cash_flow)
+          ELSE 0
+        END,
+        (cum_pref_needed + cum_common_needed) - (cumulative_cash_flow - annual_cash_flow)
       )
-    ) AS pref_paid_this_year,
+      ELSE common_equity * (1 + common_target_irr)
+    END AS common_distribution,
     
-    -- Remaining cash after preferred
-    GREATEST(0,
-      total_cash_flow - 
-      GREATEST(0,
-        LEAST(
-          total_cash_flow,
-          GREATEST(0, pref_total_target - cum_pref_paid_prior)
-        )
-      )
-    ) AS cash_after_pref,
-    
-    -- TIER 2: Common payments this year
-    GREATEST(0,
-      LEAST(
-        GREATEST(0,
-          total_cash_flow - 
-          GREATEST(0,
-            LEAST(
-              total_cash_flow,
-              GREATEST(0, pref_total_target - cum_pref_paid_prior)
-            )
+    -- Step 3: Remaining cash for promote/hurdles
+    GREATEST(0, 
+      annual_cash_flow 
+      - CASE 
+          WHEN cumulative_cash_flow <= cum_pref_needed 
+          THEN annual_cash_flow
+          WHEN cumulative_cash_flow - annual_cash_flow < cum_pref_needed
+          THEN cum_pref_needed - (cumulative_cash_flow - annual_cash_flow)
+          ELSE 0
+        END
+      - CASE
+          WHEN cumulative_cash_flow <= cum_pref_needed THEN 0
+          WHEN cumulative_cash_flow <= cum_pref_needed + cum_common_needed
+          THEN LEAST(
+            annual_cash_flow - CASE 
+              WHEN cumulative_cash_flow <= cum_pref_needed THEN annual_cash_flow
+              WHEN cumulative_cash_flow - annual_cash_flow < cum_pref_needed 
+              THEN cum_pref_needed - (cumulative_cash_flow - annual_cash_flow)
+              ELSE 0
+            END,
+            (cum_pref_needed + cum_common_needed) - (cumulative_cash_flow - annual_cash_flow)
           )
-        ),
-        GREATEST(0, common_total_target - cum_common_paid_prior)
-      )
-    ) AS common_paid_this_year,
+          ELSE common_equity * (1 + common_target_irr)
+        END
+    ) AS promote_pool,
     
-    -- Remaining cash after common (goes to promote tiers)
-    GREATEST(0,
-      total_cash_flow - 
-      GREATEST(0,
-        LEAST(
-          total_cash_flow,
-          GREATEST(0, pref_total_target - cum_pref_paid_prior)
-        )
-      ) -
-      GREATEST(0,
-        LEAST(
-          GREATEST(0,
-            total_cash_flow - 
-            GREATEST(0,
-              LEAST(
-                total_cash_flow,
-                GREATEST(0, pref_total_target - cum_pref_paid_prior)
-              )
-            )
-          ),
-          GREATEST(0, common_total_target - cum_common_paid_prior)
-        )
-      )
-    ) AS promote_cash_available,
-    
-    -- Store key values for promote calculations
-    pref_total_target,
-    common_total_target,
-    cum_pref_paid_prior,
-    cum_common_paid_prior
-    
-  FROM cumulative_payments
+    current_portfolio_multiple,
+    pref_equity,
+    common_equity,
+    total_equity
+
+  FROM distributions_needed
 ),
 
 --------------------------------------------------------------------------------
--- STEP 5: Allocate promote cash through hurdle tiers
+-- Apply hurdle tier splits to promote pool
 --------------------------------------------------------------------------------
-promote_allocation AS (
+hurdle_splits AS (
   SELECT
-    w.*,
+    fw.*,
     
-    -- Determine which hurdle tier we're in based on current IRR
+    -- Hurdle 1 (up to 8%)
     CASE 
-      WHEN current_portfolio_irr <= 0.08 THEN 'hurdle1'
-      WHEN current_portfolio_irr <= 0.12 THEN 'hurdle2' 
-      WHEN current_portfolio_irr <= 0.18 THEN 'hurdle3'
-      ELSE 'residual'
-    END AS current_hurdle_tier,
-    
-    -- Get the appropriate splits for current tier
-    CASE 
-      WHEN current_portfolio_irr <= 0.08 THEN 0.7
-      WHEN current_portfolio_irr <= 0.12 THEN 0.6
-      WHEN current_portfolio_irr <= 0.18 THEN 0.5  
-      ELSE 0.35
-    END AS common_split_pct,
+      WHEN current_portfolio_multiple <= 0.08 THEN promote_pool * 0.7
+      WHEN current_portfolio_multiple > 0.08 THEN promote_pool * 0.08 / current_portfolio_multiple * 0.7
+      ELSE 0
+    END AS h1_common,
     
     CASE 
-      WHEN current_portfolio_irr <= 0.08 THEN 0.3
-      WHEN current_portfolio_irr <= 0.12 THEN 0.4
-      WHEN current_portfolio_irr <= 0.18 THEN 0.5
-      ELSE 0.65  
-    END AS sponsor_split_pct
+      WHEN current_portfolio_multiple <= 0.08 THEN promote_pool * 0.3
+      WHEN current_portfolio_multiple > 0.08 THEN promote_pool * 0.08 / current_portfolio_multiple * 0.3  
+      ELSE 0
+    END AS h1_sponsor,
     
-  FROM waterfall_calc AS w
+    -- Hurdle 2 (8% to 12%)
+    CASE
+      WHEN current_portfolio_multiple <= 0.08 THEN 0
+      WHEN current_portfolio_multiple <= 0.12 THEN promote_pool * ((current_portfolio_multiple - 0.08) / current_portfolio_multiple) * 0.6
+      WHEN current_portfolio_multiple > 0.12 THEN promote_pool * (0.04 / current_portfolio_multiple) * 0.6
+      ELSE 0  
+    END AS h2_common,
+    
+    CASE
+      WHEN current_portfolio_multiple <= 0.08 THEN 0
+      WHEN current_portfolio_multiple <= 0.12 THEN promote_pool * ((current_portfolio_multiple - 0.08) / current_portfolio_multiple) * 0.4
+      WHEN current_portfolio_multiple > 0.12 THEN promote_pool * (0.04 / current_portfolio_multiple) * 0.4
+      ELSE 0
+    END AS h2_sponsor,
+    
+    -- Hurdle 3 (12% to 18%)  
+    CASE
+      WHEN current_portfolio_multiple <= 0.12 THEN 0
+      WHEN current_portfolio_multiple <= 0.18 THEN promote_pool * ((current_portfolio_multiple - 0.12) / current_portfolio_multiple) * 0.5
+      WHEN current_portfolio_multiple > 0.18 THEN promote_pool * (0.06 / current_portfolio_multiple) * 0.5
+      ELSE 0
+    END AS h3_common,
+    
+    CASE  
+      WHEN current_portfolio_multiple <= 0.12 THEN 0
+      WHEN current_portfolio_multiple <= 0.18 THEN promote_pool * ((current_portfolio_multiple - 0.12) / current_portfolio_multiple) * 0.5
+      WHEN current_portfolio_multiple > 0.18 THEN promote_pool * (0.06 / current_portfolio_multiple) * 0.5
+      ELSE 0
+    END AS h3_sponsor,
+    
+    -- Residual (above 18%)
+    CASE
+      WHEN current_portfolio_multiple <= 0.18 THEN 0  
+      ELSE promote_pool * ((current_portfolio_multiple - 0.18) / current_portfolio_multiple) * 0.35
+    END AS residual_common,
+    
+    CASE
+      WHEN current_portfolio_multiple <= 0.18 THEN 0
+      ELSE promote_pool * ((current_portfolio_multiple - 0.18) / current_portfolio_multiple) * 0.65  
+    END AS residual_sponsor
+
+  FROM final_waterfall fw
 )
 
---------------------------------------------------------------------------------
--- FINAL OUTPUT: Clean buckets for distribution
---------------------------------------------------------------------------------
 SELECT
   portfolio_id,
   year,
-  total_cash_flow,
-  current_portfolio_irr,
-  current_hurdle_tier,
+  annual_cash_flow,
   
-  -- Preferred distributions
-  pref_paid_this_year AS pref_total,
+  -- Core distributions
+  ROUND(pref_distribution, 2) AS pref_total,
+  ROUND(common_distribution, 2) AS common_total,
   
-  -- Common distributions  
-  common_paid_this_year AS common_total,
-  
-  -- Promote distributions by tier
-  CASE WHEN current_hurdle_tier = 'hurdle1' 
-       THEN ROUND(promote_cash_available * common_split_pct, 2) 
-       ELSE 0 END AS h1_common,
-       
-  CASE WHEN current_hurdle_tier = 'hurdle1'
-       THEN ROUND(promote_cash_available * sponsor_split_pct, 2)
-       ELSE 0 END AS h1_sponsor,
-       
-  CASE WHEN current_hurdle_tier = 'hurdle2'
-       THEN ROUND(promote_cash_available * common_split_pct, 2)
-       ELSE 0 END AS h2_common,
-       
-  CASE WHEN current_hurdle_tier = 'hurdle2' 
-       THEN ROUND(promote_cash_available * sponsor_split_pct, 2)
-       ELSE 0 END AS h2_sponsor,
-       
-  CASE WHEN current_hurdle_tier = 'hurdle3'
-       THEN ROUND(promote_cash_available * common_split_pct, 2) 
-       ELSE 0 END AS h3_common,
-       
-  CASE WHEN current_hurdle_tier = 'hurdle3'
-       THEN ROUND(promote_cash_available * sponsor_split_pct, 2)
-       ELSE 0 END AS h3_sponsor,
-       
-  CASE WHEN current_hurdle_tier = 'residual'
-       THEN ROUND(promote_cash_available * common_split_pct, 2)
-       ELSE 0 END AS residual_common,
-       
-  CASE WHEN current_hurdle_tier = 'residual' 
-       THEN ROUND(promote_cash_available * sponsor_split_pct, 2)
-       ELSE 0 END AS residual_sponsor,
+  -- Hurdle distributions
+  ROUND(h1_common, 2) AS h1_common,
+  ROUND(h1_sponsor, 2) AS h1_sponsor, 
+  ROUND(h2_common, 2) AS h2_common,
+  ROUND(h2_sponsor, 2) AS h2_sponsor,
+  ROUND(h3_common, 2) AS h3_common,
+  ROUND(h3_sponsor, 2) AS h3_sponsor,
+  ROUND(residual_common, 2) AS residual_common,
+  ROUND(residual_sponsor, 2) AS residual_sponsor,
   
   -- Totals for verification
-  pref_paid_this_year + common_paid_this_year + promote_cash_available AS total_distributed,
-  promote_cash_available AS total_promote_cash
+  ROUND(pref_distribution + common_distribution + h1_common + h1_sponsor + 
+        h2_common + h2_sponsor + h3_common + h3_sponsor + 
+        residual_common + residual_sponsor, 2) AS total_distributed,
+  
+  -- Portfolio metrics
+  ROUND(current_portfolio_multiple, 4) AS portfolio_multiple,
+  pref_equity,
+  common_equity,
+  total_equity
 
-FROM promote_allocation
+FROM hurdle_splits
 ORDER BY portfolio_id, year
