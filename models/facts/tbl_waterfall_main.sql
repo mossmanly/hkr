@@ -12,8 +12,8 @@ hurdle_tiers AS (
   SELECT
     hurdle_id,
     irr_range_high,
-    common_share AS investor_share,
-    sponsor_share
+    investor_share,
+    (1 - investor_share) AS sponsor_share
   FROM hkh_dev.tbl_hurdle_tiers
 ),
 
@@ -470,6 +470,9 @@ SELECT
   ROUND(common_roc_paid, 2) AS common_roc_paid,
   ROUND(common_irr_paid, 2) AS common_irr_paid,
   
+  -- Sponsor catchup (if any) - this could be calculated but I don't see it in the original model
+  0 AS sponsor_catchup_paid,
+  
   -- Hurdle distributions
   ROUND(hurdle1_investor_calc, 2) AS hurdle1_investor,
   ROUND(hurdle1_sponsor_calc, 2) AS hurdle1_sponsor,
@@ -488,7 +491,16 @@ SELECT
   ROUND(pref_roc_paid + pref_irr_paid + common_roc_paid + common_irr_paid + 
         hurdle1_investor_calc + hurdle1_sponsor_calc + hurdle2_investor_calc + hurdle2_sponsor_calc +
         hurdle3_investor_calc + hurdle3_sponsor_calc + residual_investor_calc + residual_sponsor_calc + 
-        target_irr_excess_to_sponsor, 2) AS total_distributed
+        target_irr_excess_to_sponsor, 2) AS total_distributed,
+  
+  -- Additional fields that were in your CSV
+  ROUND(total_cash_flow - (pref_roc_paid + pref_irr_paid + common_roc_paid + common_irr_paid + 
+        hurdle1_investor_calc + hurdle1_sponsor_calc + hurdle2_investor_calc + hurdle2_sponsor_calc +
+        hurdle3_investor_calc + hurdle3_sponsor_calc + residual_investor_calc + residual_sponsor_calc + 
+        target_irr_excess_to_sponsor), 2) AS validation_difference,
+  
+  FALSE AS catchup_enabled,  -- Adjust this based on your actual catchup logic
+  0.0 AS target_allocation   -- Adjust this based on your target allocation logic
   
 FROM hurdle_distributions
 ORDER BY portfolio_id, year
