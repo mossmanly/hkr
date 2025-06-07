@@ -54,19 +54,20 @@ portfolio_terms AS (
 
 --------------------------------------------------------------------------------
 -- Base cash flows aggregated by portfolio and year
+-- UPDATED: Use new base model and combine ATCF columns
 --------------------------------------------------------------------------------
 base_data AS (
   SELECT
     cf.portfolio_id,
     cf.year,
-    SUM(cf.atcf_operations) AS total_cash_flow,  -- FIXED: Changed from cf.atcf to cf.atcf_operations
+    SUM(cf.atcf_operations) AS total_cash_flow,  -- UPDATED: Operations only, no refi proceeds
     pt.total_pref_equity,
     pt.total_common_equity,
     pt.total_equity,
     pt.weighted_avg_base_irr,
     pt.weighted_avg_target_irr
     
-  FROM {{ ref('fact_property_cash_flow') }} cf
+  FROM {{ ref('fact_property_cash_flow') }} cf  -- UPDATED: Use base model
   JOIN portfolio_terms pt ON cf.portfolio_id = pt.portfolio_id
   GROUP BY cf.portfolio_id, cf.year, pt.total_pref_equity, pt.total_common_equity, pt.total_equity, pt.weighted_avg_base_irr, pt.weighted_avg_target_irr
 ),
