@@ -59,7 +59,7 @@ base_data AS (
   SELECT
     cf.portfolio_id,
     cf.year,
-    SUM(cf.atcf) AS total_cash_flow,  -- Aggregate cash flows by year
+    SUM(cf.atcf_operations) AS total_cash_flow,  -- FIXED: Changed from cf.atcf to cf.atcf_operations
     pt.total_pref_equity,
     pt.total_common_equity,
     pt.total_equity,

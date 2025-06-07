@@ -1,85 +1,71 @@
--- models/fact_property_cash_flow.sql
--- FIXED VERSION: Actually implements workforce housing strategy with tenant protection
+-- models/fact_property_cash_flow_base.sql
+-- BASE MODEL: Cash flows WITHOUT management fees (breaks circular dependency)
 
-WITH assumptions AS (
-    SELECT
-        property_id,
-        unit_count,
-        avg_rent_per_unit,
-        init_turn_rate,
-        norm_turn_rate,
-        cola_snap,
-        norm_snap,
-        reno_snap,
-        vacancy_rate,
-        collections_loss_rate,
-        opex_ratio,
-        purchase_price,
-        ds_ltv,
-        ds_int,
-        ds_term,
-        capex_per_unit,
-        ds_refi_year
-    FROM {{ source('inputs', 'property_inputs') }}
-),
-
--- FIXED PGI CALCULATION: Now actually uses your workforce housing variables
-pgi_calc AS (
+-- Fixed recursive CTE for PGI calculation
+WITH pgi_calc AS (
     WITH RECURSIVE pgi_recursive AS (
-        -- Year 1: Initial stabilization period with incentive to sign long-term leases
+        -- Base case: Year 1 for each property
         SELECT 
-            a.property_id,
+            property_id,
             1 as year,
+            unit_count,
+            avg_rent_per_unit,
+            init_turn_rate,
+            norm_turn_rate,
+            cola_snap,
+            norm_snap,
+            reno_snap,
+            vacancy_rate,
+            collections_loss_rate,
+            opex_ratio,
+            capex_per_unit,
+            ds_refi_year,
+            -- Year 1 PGI: Initial stabilization with workforce housing protection
             ROUND(
-                a.unit_count * a.avg_rent_per_unit * 12 * (
-                    -- Majority retain and sign long-term leases with COLA protection
-                    (1 - a.init_turn_rate) * (1 + a.cola_snap) +
-                    -- Small % natural turnover: renovate + market snap but with 2-month vacancy
-                    a.init_turn_rate * (1 + a.reno_snap) * (10.0/12)
-                ), 0
-            ) AS pgi,
-            a.vacancy_rate,
-            a.collections_loss_rate,
-            a.opex_ratio,
-            a.unit_count,
-            a.capex_per_unit,
-            a.ds_refi_year,
-            a.norm_turn_rate,
-            a.cola_snap,
-            a.norm_snap
-        FROM {{ source('inputs', 'property_inputs') }} a
+                unit_count * avg_rent_per_unit * 12 * (
+                    -- Majority retain with COLA protection (no displacement)
+                    (1 - init_turn_rate) * (1 + cola_snap) +
+                    -- Small % natural turnover: renovate + market snap with vacancy
+                    init_turn_rate * (1 + reno_snap) * (10.0/12)
+                ), 2
+            ) AS pgi
+        FROM {{ source('inputs', 'property_inputs') }}
         
         UNION ALL
         
-        -- Years 2+: Stable operations with protected tenants (NO DISPLACEMENT)
+        -- Recursive case: Years 2-20 based on previous year
         SELECT 
             pr.property_id,
             pr.year + 1,
-            ROUND(
-                pr.pgi * (
-                    -- Most tenants stay with COLA-only increases
-                    (1 - pr.norm_turn_rate) * (1 + pr.cola_snap) +
-                    -- Small % natural turnover gets market adjustment when they voluntarily leave
-                    pr.norm_turn_rate * (1 + pr.norm_snap)
-                ), 2
-            ) AS pgi,
+            pr.unit_count,
+            pr.avg_rent_per_unit,
+            pr.init_turn_rate,
+            pr.norm_turn_rate,
+            pr.cola_snap,
+            pr.norm_snap,
+            pr.reno_snap,
             pr.vacancy_rate,
             pr.collections_loss_rate,
             pr.opex_ratio,
-            pr.unit_count,
             pr.capex_per_unit,
             pr.ds_refi_year,
-            pr.norm_turn_rate,
-            pr.cola_snap,
-            pr.norm_snap
-        FROM pgi_recursive pr
-        WHERE pr.year < 20
+            -- Years 2+: Stable operations with protected tenants
+            ROUND(
+                pr.pgi * (
+                    -- Most tenants stay with COLA-only increases (workforce housing protection)
+                    (1 - pr.norm_turn_rate) * (1 + pr.cola_snap) +
+                    -- Small % natural turnover gets market adjustment
+                    pr.norm_turn_rate * (1 + pr.norm_snap)
+                ), 2
+            ) AS pgi
+        FROM pgi_recursive pr  -- FIXED: Only reference recursive CTE, not source table
+        WHERE pr.year < 20     -- Stop at year 20
     )
     
     SELECT 
         property_id,
         year,
-        pgi::INTEGER AS pgi,  -- Cast to integer here instead
+        pgi,
         vacancy_rate,
         collections_loss_rate,
         opex_ratio,
@@ -89,19 +75,17 @@ pgi_calc AS (
     FROM pgi_recursive
 ),
 
-original_ds AS (
+-- Use your existing loan payments
+loan_payments AS (
     SELECT 
         property_id,
-        ROUND(purchase_price * ds_ltv, 0) AS loan_amount,
-        ROUND(
-            (purchase_price * ds_ltv)
-            * (ds_int * POWER(1 + ds_int, ds_term))
-            / (POWER(1 + ds_int, ds_term) - 1),
-            0
-        ) AS annual_ds
-    FROM {{ source('inputs', 'property_inputs') }}
+        year,
+        annual_payment AS debt_service,
+        refi_proceeds
+    FROM {{ ref('loan_amort_schedule') }}
 ),
 
+-- Use your existing capex calculation
 capex_calc AS (
     SELECT
         f.property_id,
@@ -111,106 +95,89 @@ capex_calc AS (
     JOIN {{ source('inputs', 'property_inputs') }} rra ON rra.property_id = f.property_id
 ),
 
-refi AS (
+-- Clean, step-by-step revenue calculations
+revenue_calcs AS (
     SELECT
-        property_id,
-        ds_refi_year,
-        refi_annual_ds,
-        refi_proceeds
-    FROM {{ ref('refi_outcomes') }}
+        pc.property_id,
+        pc.year,
+        pc.pgi,
+        pc.vacancy_rate,
+        pc.collections_loss_rate,
+        pc.opex_ratio,
+        
+        -- Step 1: Calculate vacancy loss
+        ROUND(pc.pgi * COALESCE(pc.vacancy_rate, 0), 0) AS vacancy_loss,
+        
+        -- Step 2: Calculate gross collectible rent (PGI - vacancy)
+        ROUND(pc.pgi - (pc.pgi * COALESCE(pc.vacancy_rate, 0)), 0) AS gross_collectible_rent
+        
+    FROM pgi_calc pc
+),
+
+-- Calculate collections and EGI based on clean intermediate values
+collections_calcs AS (
+    SELECT
+        rc.*,
+        
+        -- Step 3: Calculate collections loss on collectible rent
+        ROUND(rc.gross_collectible_rent * COALESCE(rc.collections_loss_rate, 0), 0) AS collections_loss,
+        
+        -- Step 4: Calculate EGI (Effective Gross Income)
+        ROUND(rc.gross_collectible_rent - (rc.gross_collectible_rent * COALESCE(rc.collections_loss_rate, 0)), 0) AS egi
+        
+    FROM revenue_calcs rc
+),
+
+-- Calculate operating expenses (BASE only, no management fees)
+operating_calcs AS (
+    SELECT
+        cc.*,
+        
+        -- Step 5: Calculate BASE operating expenses only
+        ROUND(cc.egi * COALESCE(cc.opex_ratio, 0.30), 0) AS opex,
+        
+        -- Step 6: Calculate NOI (Net Operating Income)
+        ROUND(cc.egi - (cc.egi * COALESCE(cc.opex_ratio, 0.30)), 0) AS noi
+        
+    FROM collections_calcs cc
+),
+
+-- Calculate cash flows (BASE only, no management fees)
+cash_flow_calcs AS (
+    SELECT
+        oc.*,
+        lp.debt_service,
+        cx.capex,
+        
+        -- Step 7: Calculate BTCF (Before-Tax Cash Flow)
+        ROUND(oc.noi - COALESCE(lp.debt_service, 0), 0) AS btcf,
+        
+        -- Step 8: Calculate ATCF Operations (After-Tax Cash Flow from Operations)
+        ROUND(oc.noi - COALESCE(lp.debt_service, 0) - COALESCE(cx.capex, 0), 0) AS atcf_operations,
+        
+        -- Step 9: Refi proceeds (when applicable)
+        ROUND(COALESCE(lp.refi_proceeds, 0), 0) AS atcf_refi
+        
+    FROM operating_calcs oc
+    LEFT JOIN loan_payments lp ON lp.property_id = oc.property_id AND lp.year = oc.year
+    LEFT JOIN capex_calc cx ON cx.property_id = oc.property_id AND cx.year = oc.year
 )
 
+-- FINAL SELECT: BASE cash flows (no management fees)
 SELECT
     'micro-1' AS portfolio_id,
-    pc.property_id,
-    pc.year,
-    pc.pgi,
-    ROUND(pc.pgi * COALESCE(pc.vacancy_rate, 0), 0) AS vacancy_loss,
-    ROUND((pc.pgi - pc.pgi * COALESCE(pc.vacancy_rate, 0)) * COALESCE(pc.collections_loss_rate, 0), 0) AS collections_loss,
-    ROUND(
-        pc.pgi
-        - (pc.pgi * COALESCE(pc.vacancy_rate, 0))
-        - ((pc.pgi - pc.pgi * COALESCE(pc.vacancy_rate, 0))) * COALESCE(pc.collections_loss_rate, 0),
-        0
-    ) AS egi,
-    ROUND(
-        (
-            pc.pgi
-            - (pc.pgi * COALESCE(pc.vacancy_rate, 0))
-            - ((pc.pgi - pc.pgi * COALESCE(pc.vacancy_rate, 0))) * COALESCE(pc.collections_loss_rate, 0)
-        ) * COALESCE(pc.opex_ratio, 0.30),
-        0
-    ) AS opex,
-    ROUND(
-        (
-            pc.pgi
-            - (pc.pgi * COALESCE(pc.vacancy_rate, 0))
-            - ((pc.pgi - pc.pgi * COALESCE(pc.vacancy_rate, 0))) * COALESCE(pc.collections_loss_rate, 0)
-        ) - (
-            (
-                pc.pgi
-                - (pc.pgi * COALESCE(pc.vacancy_rate, 0))
-                - ((pc.pgi - pc.pgi * COALESCE(pc.vacancy_rate, 0))) * COALESCE(pc.collections_loss_rate, 0)
-            ) * COALESCE(pc.opex_ratio, 0.30)
-        ),
-        0
-    ) AS noi,
-    ROUND(
-        CASE
-            WHEN pc.year < pi.ds_refi_year THEN ods.annual_ds
-            ELSE ro.refi_annual_ds
-        END,
-        0
-    ) AS debt_service,
-    ROUND(
-        (
-            (
-                pc.pgi
-                - (pc.pgi * COALESCE(pc.vacancy_rate, 0))
-                - ((pc.pgi - pc.pgi * COALESCE(pc.vacancy_rate, 0))) * COALESCE(pc.collections_loss_rate, 0)
-            ) - (
-                (
-                    pc.pgi
-                    - (pc.pgi * COALESCE(pc.vacancy_rate, 0))
-                    - ((pc.pgi - pc.pgi * COALESCE(pc.vacancy_rate, 0))) * COALESCE(pc.collections_loss_rate, 0)
-                ) * COALESCE(pc.opex_ratio, 0.30)
-            )
-        ) - (
-            CASE
-                WHEN pc.year < pi.ds_refi_year THEN ods.annual_ds
-                ELSE ro.refi_annual_ds
-            END
-        ),
-        0
-    ) AS btcf,
-    cx.capex,
-    ROUND(
-        (
-            (
-                (
-                    pc.pgi
-                    - (pc.pgi * COALESCE(pc.vacancy_rate, 0))
-                    - ((pc.pgi - pc.pgi * COALESCE(pc.vacancy_rate, 0))) * COALESCE(pc.collections_loss_rate, 0)
-                ) - (
-                    (
-                        pc.pgi
-                        - (pc.pgi * COALESCE(pc.vacancy_rate, 0))
-                        - ((pc.pgi - pc.pgi * COALESCE(pc.vacancy_rate, 0))) * COALESCE(pc.collections_loss_rate, 0)
-                    ) * COALESCE(pc.opex_ratio, 0.30)
-                )
-            ) - (
-                CASE
-                    WHEN pc.year < pi.ds_refi_year THEN ods.annual_ds
-                    ELSE ro.refi_annual_ds
-                END
-            )
-        ) - COALESCE(cx.capex, 0)
-        + CASE WHEN pc.year = pi.ds_refi_year THEN COALESCE(ro.refi_proceeds, 0) ELSE 0 END,
-        0
-    ) AS atcf
-
-FROM pgi_calc pc
-LEFT JOIN assumptions pi ON pi.property_id = pc.property_id
-LEFT JOIN original_ds ods ON ods.property_id = pc.property_id
-LEFT JOIN capex_calc cx ON cx.property_id = pc.property_id AND cx.year = pc.year
-LEFT JOIN refi ro ON ro.property_id = pc.property_id
+    property_id,
+    year,
+    pgi,
+    vacancy_loss,
+    collections_loss,
+    egi,
+    opex,
+    noi,
+    debt_service,
+    btcf,
+    capex,
+    atcf_operations,
+    atcf_refi
+FROM cash_flow_calcs
+ORDER BY property_id, year
