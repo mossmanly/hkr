@@ -1,4 +1,4 @@
-sql{{ config(materialized='view') }}
+{{ config(materialized='view') }}
 
 SELECT
     investor_serial,
@@ -6,9 +6,8 @@ SELECT
     COALESCE(last_name, investor_serial) AS last_name,
     equity_contributed,
     ROUND(
-        (equity_contributed * 100.0) / SUM(equity_contributed) OVER (), 
-        2
-    ) AS percentage_of_investments
+        (equity_contributed * 100.0) / SUM(equity_contributed) OVER (), 2
+        ) AS percentage_of_investments
 
 FROM hkh_dev.tbl_terms
 WHERE equity_contributed IS NOT NULL
