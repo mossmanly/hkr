@@ -18,27 +18,27 @@ SELECT
     
     -- Individual Investor Distribution Calculations
     -- ROC (Return of Capital)
-    ROUND((w.pref_roc_paid + w.common_roc_paid) * t.invested_ratio, 2) AS investor_roc,
+    ROUND((w.pref_roc_paid + w.common_roc_paid) * t.percentage_of_investments, 2) AS investor_roc,
     
     -- Base/Preferred IRR
-    ROUND(w.pref_irr_paid * t.invested_ratio, 2) AS investor_base_pref_irr,
+    ROUND(w.pref_irr_paid * t.percentage_of_investments, 2) AS investor_base_pref_irr,
     
     -- Hurdle Distributions
-    ROUND(w.hurdle1_investor * t.invested_ratio, 2) AS investor_hurdle1,
-    ROUND(w.hurdle2_investor * t.invested_ratio, 2) AS investor_hurdle2,
-    ROUND(w.hurdle3_investor * t.invested_ratio, 2) AS investor_hurdle3,
+    ROUND(w.hurdle1_investor * t.percentage_of_investments, 2) AS investor_hurdle1,
+    ROUND(w.hurdle2_investor * t.percentage_of_investments, 2) AS investor_hurdle2,
+    ROUND(w.hurdle3_investor * t.percentage_of_investments, 2) AS investor_hurdle3,
     
     -- Residual Distribution
-    ROUND(w.residual_investor * t.invested_ratio, 2) AS investor_residual,
+    ROUND(w.residual_investor * t.percentage_of_investments, 2) AS investor_residual,
     
     -- Total Distribution for this period
-    ROUND(w.total_investor * t.invested_ratio, 2) AS investor_total
+    ROUND(w.total_investor * t.percentage_of_investments, 2) AS investor_total
 
-FROM hkh_dev.tbl_waterfall_main w
+FROM "hkh_decision_support_db"."hkh_dev"."tbl_waterfall_main" w
 INNER JOIN hkh_dev.tbl_terms t ON w.portfolio_id = t.portfolio_id
 
 -- Suppress periods where investor receives no distribution
-WHERE (w.total_investor * t.invested_ratio) > 0
+WHERE (w.total_investor * t.percentage_of_investments) > 0
 
 -- Order by investor and year for clear waterfall presentation
 ORDER BY 

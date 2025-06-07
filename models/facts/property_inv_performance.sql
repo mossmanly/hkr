@@ -9,19 +9,19 @@ SELECT
     cf.year,
     
     -- Cash Flow Metrics
-    cf.atcf,
+    cf.atcf_operations,
     cf.noi,
-    (cf.atcf / pi.purchase_price) AS annual_coc,
+    (cf.atcf_operations / pi.purchase_price) AS annual_coc,
     
     -- Cumulative Cash Flow
-    SUM(cf.atcf) OVER (
+    SUM(cf.atcf_operations) OVER (
         PARTITION BY cf.property_id 
         ORDER BY cf.year 
         ROWS UNBOUNDED PRECEDING
     ) AS cumulative_atcf,
     
     -- Cumulative CoC
-    SUM(cf.atcf) OVER (
+    SUM(cf.atcf_operations) OVER (
         PARTITION BY cf.property_id 
         ORDER BY cf.year 
         ROWS UNBOUNDED PRECEDING

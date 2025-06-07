@@ -60,12 +60,12 @@ SELECT
 FROM {{ source('inputs', 'property_inputs') }} pi
 
 -- Join to get year 1 NOI for initial cap rate
-LEFT JOIN {{ source('hkh_dev', 'fact_property_cash_flow') }} cf_year1 
+LEFT JOIN {{ ref('fact_property_cash_flow') }} cf_year1 
     ON pi.property_id = cf_year1.property_id 
     AND cf_year1.year = 1
 
 -- Join to cash flow data for NOI in target years
-LEFT JOIN {{ source('hkh_dev', 'fact_property_cash_flow') }} cf_noi
+LEFT JOIN {{ ref('fact_property_cash_flow') }} cf_noi
     ON pi.property_id = cf_noi.property_id
     AND cf_noi.year IN (5, 10, 15, 20)
 
