@@ -34,7 +34,7 @@ SELECT
     -- Total Distribution for this period
     ROUND(w.total_investor * t.percentage_of_investments, 2) AS investor_total
 
-FROM "hkh_decision_support_db"."hkh_dev"."tbl_waterfall_main" w
+FROM {{ ref('tbl_waterfall_main') }} w
 INNER JOIN hkh_dev.tbl_terms t ON w.portfolio_id = t.portfolio_id
 
 -- Suppress periods where investor receives no distribution

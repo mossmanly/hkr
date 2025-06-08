@@ -26,5 +26,6 @@ sources:
     tables:
       - name: property_inputs
       - name: capex_factors
+      - name: global_inputs
       # (If you have any other tables under inputs that you reference, list them here)
       # - name: some_other_input_table

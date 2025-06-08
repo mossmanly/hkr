@@ -30,7 +30,7 @@ SELECT
     -- Property Details
     pi.purchase_price
 
-FROM {{ source('hkh_dev', 'fact_property_cash_flow') }} cf
+FROM {{ ref('fact_property_cash_flow') }} cf
 JOIN {{ source('inputs', 'property_inputs') }} pi
     ON cf.property_id = pi.property_id
 
