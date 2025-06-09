@@ -11,8 +11,104 @@ sources:
     schema: hkh_dev
     tables:
       - name: tbl_terms
+        description: "Loan terms and financing parameters"
+      - name: capex_spending_focus_mapping
+        description: "Maps spending focus categories to improvement types for incentive matching"
+        
       - name: tbl_hurdle_tiers
+        description: "Investment hurdle rate tiers by risk/market"
+        
       - name: fact_property_cash_flow
+        description: "Core property cash flow calculations and projections"
+        
+      - name: capex_reserve_mgt
+        description: "Reserve fund management, interest income, and spending tracking"
+        columns:
+          - name: property_id
+            description: "Links to property being modeled"
+            tests:
+              - not_null
+          - name: year
+            description: "Year of hold period"
+            tests:
+              - not_null
+          - name: total_reserves_raised
+            description: "Annual reserves contributed (usually consistent)"
+            tests:
+              - not_null
+          - name: float_interest_rate
+            description: "Interest rate earned on reserve balance"
+            tests:
+              - not_null
+          - name: capex_spent
+            description: "Actual capex expenditure for the year"
+            tests:
+              - not_null
+          - name: reserve_status
+            description: "Health of reserve fund relative to spending needs"
+            tests:
+              - accepted_values:
+                  values: ['ADEQUATE', 'SHORTFALL', 'ABUNDANT']
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+        
+      # Incentive program management tables (created by our new models)
+      - name: incentive_programs
+        description: "Master table of sustainability incentive programs with rich context"
+        columns:
+          - name: program_id
+            description: "Unique identifier for each incentive program"
+            tests:
+              - not_null
+              - unique
+          - name: jurisdiction_level
+            description: "Level of government: federal, state, county, city, utility"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['federal', 'state', 'county', 'city', 'utility']
+          - name: tax_treatment
+            description: "How incentive affects taxes: reduces_basis, tax_credit, taxable_income"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['reduces_basis', 'tax_credit', 'taxable_income', 'tax_deductible']
+          - name: funding_stability_score
+            description: "Program stability rating 1-10 (10 = most stable)"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: [1,2,3,4,5,6,7,8,9,10]
+                  
+      - name: geographic_program_eligibility
+        description: "Geographic eligibility mapping for zip codes to program access"
+        columns:
+          - name: zip_code
+            description: "5-digit ZIP code"
+            tests:
+              - not_null
+          - name: state
+            description: "2-letter state code"
+            tests:
+              - not_null
+              
+      - name: program_geographic_requirements
+        description: "Defines geographic requirements for each incentive program"
+        
+      - name: property_locations
+        description: "Property location data for geographic eligibility determination"
+        columns:
+          - name: property_id
+            description: "Unique property identifier"
+            tests:
+              - not_null
+              - unique
+          - name: zip_code
+            description: "Property ZIP code for program eligibility"
+            tests:
+              - not_null
+              
       # (If you have any other tables under hkh_dev that you reference, list them here)
       # - name: another_table_in_hkh_dev
 
@@ -25,7 +121,76 @@ sources:
     schema: inputs
     tables:
       - name: property_inputs
+        description: "Core property characteristics and acquisition assumptions"
+        columns:
+          - name: property_id
+            description: "Unique property identifier"
+            tests:
+              - not_null
+              - unique
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 3, period: day}
+          
       - name: capex_factors
+        description: "Annual capex spending factors by property and improvement focus area"
+        columns:
+          - name: property_id
+            description: "Links to property being modeled"
+            tests:
+              - not_null
+          - name: year
+            description: "Year of hold period (1, 2, 3, etc.)"
+            tests:
+              - not_null
+          - name: capex_factor
+            description: "Percentage of property value to spend on capex this year"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: [0.0]
+                  quote: false
+                  severity: warn  # Allow non-zero values but warn on zero
+          - name: spending_focus
+            description: "Category of improvements planned for this year"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: 
+                    - 'Snap Renos + Emergency Repairs'
+                    - 'Snap Renos + Maintenance'
+                    - 'Roofing + Final Snap Renos'
+                    - 'HVAC Systems + Maintenance'
+                    - 'Windows + Weatherization'
+                    - 'Major Systems'
+                    - 'Flooring + Interior'
+                    - 'Exterior + Structural'
+                    - 'Energy Efficiency'
+                    - 'Preventive Maintenance'
+          - name: rationale
+            description: "Business reasoning for this year's capex focus"
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+          
       - name: global_inputs
+        description: "Market assumptions and global parameters for modeling"
+        columns:
+          - name: input_name
+            description: "Parameter name (e.g., 'inflation_rate', 'cap_rate')"
+            tests:
+              - not_null
+          - name: input_value
+            description: "Numeric value for the parameter"
+            tests:
+              - not_null
+        freshness:
+          warn_after: {count: 7, period: day}
+          error_after: {count: 30, period: day}
+          
+      # New tables for incentive program integration
+      - name: spending_focus_mapping
+        description: "Maps spending focus categories to improvement types for incentive matching"
+        
       # (If you have any other tables under inputs that you reference, list them here)
       # - name: some_other_input_table
