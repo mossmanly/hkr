@@ -1,6 +1,7 @@
 -- property_inv_metrics.sql (dbt model) 
 -- Single Summary Metrics for portfolio comparison and executive reporting
 -- Updates automatically when underlying data changes
+-- UPDATED: Portfolio filtering with company scoping
 
 {{ config(materialized='view') }}
 
@@ -59,6 +60,13 @@ SELECT
     
 FROM {{ source('inputs', 'property_inputs') }} pi
 
+-- Portfolio filtering: Only include properties in default portfolio for this company
+INNER JOIN {{ source('inputs', 'property_portfolio_assignments') }} ppa 
+    ON pi.property_id = ppa.property_id
+INNER JOIN {{ source('inputs', 'portfolio_settings') }} ps 
+    ON ppa.portfolio_id = ps.portfolio_id 
+    AND ppa.company_id = ps.company_id
+    
 -- Join to get year 1 NOI for initial cap rate
 LEFT JOIN {{ ref('fact_property_cash_flow') }} cf_year1 
     ON pi.property_id = cf_year1.property_id 
@@ -77,6 +85,9 @@ LEFT JOIN {{ ref('property_appreciation') }} appr
 -- Join to performance data for aggregations
 LEFT JOIN {{ ref('property_inv_performance') }} perf
     ON pi.property_id = perf.property_id
+
+WHERE ps.company_id = 1  -- Company scoping for future multi-tenancy
+  AND ps.is_default = TRUE  -- Only include default portfolio properties
 
 GROUP BY 
     pi.property_id,

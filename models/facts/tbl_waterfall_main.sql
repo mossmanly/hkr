@@ -19,17 +19,23 @@ hurdle_tiers AS (
 
 --------------------------------------------------------------------------------
 -- Calculate target IRR threshold (weighted average across all investors)
+-- UPDATED: Portfolio filtering
 --------------------------------------------------------------------------------
 target_irr_threshold AS (
   SELECT
-    portfolio_id,
-    SUM(target_irr * equity_contributed) / SUM(equity_contributed) AS weighted_avg_target_irr
-  FROM hkh_dev.tbl_terms
-  GROUP BY portfolio_id
+    t.portfolio_id,
+    SUM(t.target_irr * t.equity_contributed) / SUM(t.equity_contributed) AS weighted_avg_target_irr
+  FROM hkh_dev.tbl_terms t
+  INNER JOIN {{ source('inputs', 'portfolio_settings') }} ps 
+    ON t.portfolio_id = ps.portfolio_id
+  WHERE ps.company_id = 1  -- Company scoping for future multi-tenancy
+    AND ps.is_default = TRUE  -- Only include default portfolio
+  GROUP BY t.portfolio_id
 ),
 
 --------------------------------------------------------------------------------
 -- Get portfolio terms (aggregate once)
+-- UPDATED: Portfolio filtering
 --------------------------------------------------------------------------------
 portfolio_terms AS (
   SELECT
@@ -49,12 +55,17 @@ portfolio_terms AS (
     
   FROM hkh_dev.tbl_terms t
   JOIN target_irr_threshold tit ON t.portfolio_id = tit.portfolio_id
+  INNER JOIN {{ source('inputs', 'portfolio_settings') }} ps 
+    ON t.portfolio_id = ps.portfolio_id
+  WHERE ps.company_id = 1  -- Company scoping for future multi-tenancy
+    AND ps.is_default = TRUE  -- Only include default portfolio
   GROUP BY t.portfolio_id, tit.weighted_avg_target_irr
 ),
 
 --------------------------------------------------------------------------------
 -- Base cash flows aggregated by portfolio and year
 -- UPDATED: Use new base model and combine ATCF columns
+-- NOTE: fact_property_cash_flow already has portfolio filtering
 --------------------------------------------------------------------------------
 base_data AS (
   SELECT
@@ -67,7 +78,7 @@ base_data AS (
     pt.weighted_avg_base_irr,
     pt.weighted_avg_target_irr
     
-  FROM {{ ref('fact_property_cash_flow') }} cf  -- UPDATED: Use base model
+  FROM {{ ref('fact_property_cash_flow') }} cf  -- UPDATED: Use base model (already has portfolio filtering)
   JOIN portfolio_terms pt ON cf.portfolio_id = pt.portfolio_id
   GROUP BY cf.portfolio_id, cf.year, pt.total_pref_equity, pt.total_common_equity, pt.total_equity, pt.weighted_avg_base_irr, pt.weighted_avg_target_irr
 ),

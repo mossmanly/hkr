@@ -1,35 +1,44 @@
 -- models/fact_property_cash_flow_base.sql
 -- ENHANCED MODEL: Cash flows WITH CapEx float income using reserve view
+-- UPDATED: Portfolio filtering with company scoping
 
 -- Fixed recursive CTE for PGI calculation
 WITH pgi_calc AS (
     WITH RECURSIVE pgi_recursive AS (
         -- Base case: Year 1 for each property
         SELECT 
-            property_id,
+            pi.property_id,
             1 as year,
-            unit_count,
-            avg_rent_per_unit,
-            init_turn_rate,
-            norm_turn_rate,
-            cola_snap,
-            norm_snap,
-            reno_snap,
-            vacancy_rate,
-            collections_loss_rate,
-            opex_ratio,
-            capex_per_unit,
-            ds_refi_year,
+            pi.unit_count,
+            pi.avg_rent_per_unit,
+            pi.init_turn_rate,
+            pi.norm_turn_rate,
+            pi.cola_snap,
+            pi.norm_snap,
+            pi.reno_snap,
+            pi.vacancy_rate,
+            pi.collections_loss_rate,
+            pi.opex_ratio,
+            pi.capex_per_unit,
+            pi.ds_refi_year,
+            ppa.portfolio_id,
             -- Year 1 PGI: Initial stabilization with workforce housing protection
             ROUND(
-                (unit_count * avg_rent_per_unit * 12 * (
+                (pi.unit_count * pi.avg_rent_per_unit * 12 * (
                     -- Majority retain with COLA protection (no displacement)
-                    (1 - init_turn_rate) * (1 + cola_snap) +
+                    (1 - pi.init_turn_rate) * (1 + pi.cola_snap) +
                     -- Small % natural turnover: renovate + market snap with vacancy
-                    init_turn_rate * (1 + reno_snap) * (10.0/12)
+                    pi.init_turn_rate * (1 + pi.reno_snap) * (10.0/12)
                 ))::numeric, 2
             ) AS pgi
-        FROM {{ source('inputs', 'property_inputs') }}
+        FROM {{ source('inputs', 'property_inputs') }} pi
+        INNER JOIN {{ source('inputs', 'property_portfolio_assignments') }} ppa 
+            ON pi.property_id = ppa.property_id
+        INNER JOIN {{ source('inputs', 'portfolio_settings') }} ps 
+            ON ppa.portfolio_id = ps.portfolio_id 
+            AND ppa.company_id = ps.company_id
+        WHERE ps.company_id = 1  -- Company scoping for future multi-tenancy
+          AND ps.is_default = TRUE  -- Only include default portfolio properties
         
         UNION ALL
         
@@ -49,6 +58,7 @@ WITH pgi_calc AS (
             pr.opex_ratio,
             pr.capex_per_unit,
             pr.ds_refi_year,
+            pr.portfolio_id,
             -- Years 2+: Stable operations with protected tenants
             ROUND(
                 (pr.pgi * (
@@ -71,7 +81,8 @@ WITH pgi_calc AS (
         opex_ratio,
         unit_count,
         capex_per_unit,
-        ds_refi_year
+        ds_refi_year,
+        portfolio_id
     FROM pgi_recursive
 ),
 
@@ -105,6 +116,7 @@ revenue_calcs AS (
         pc.vacancy_rate,
         pc.collections_loss_rate,
         pc.opex_ratio,
+        pc.portfolio_id,
         
         -- Step 1: Calculate vacancy loss
         ROUND((pc.pgi * COALESCE(pc.vacancy_rate, 0))::numeric, 0) AS vacancy_loss,
@@ -168,9 +180,9 @@ cash_flow_calcs AS (
     LEFT JOIN capex_reserves cr ON cr.property_id = oc.property_id AND cr.year = oc.year
 )
 
--- FINAL SELECT: Enhanced cash flows WITH SEPARATE FLOAT INCOME LINE
+-- FINAL SELECT: Enhanced cash flows WITH PORTFOLIO FILTERING
 SELECT
-    'micro-1' AS portfolio_id,
+    portfolio_id,
     property_id,
     year,
     pgi,

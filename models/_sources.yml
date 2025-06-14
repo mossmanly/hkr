@@ -187,6 +187,67 @@ sources:
         freshness:
           warn_after: {count: 7, period: day}
           error_after: {count: 30, period: day}
+
+      # NEW PORTFOLIO MANAGEMENT TABLES
+      - name: portfolio_settings
+        description: "Portfolio configuration and default settings"
+        columns:
+          - name: company_id
+            description: "Company identifier for multi-tenancy"
+            tests:
+              - not_null
+          - name: portfolio_id
+            description: "Unique portfolio identifier"
+            tests:
+              - not_null
+          - name: is_default
+            description: "Whether this portfolio is the default for reporting"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: [true, false]
+          - name: portfolio_name
+            description: "Human-readable portfolio name"
+          - name: is_active
+            description: "Whether this portfolio is currently active"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: [true, false]
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+
+      - name: property_portfolio_assignments
+        description: "Maps properties to portfolios with lifecycle status tracking"
+        columns:
+          - name: company_id
+            description: "Company identifier for multi-tenancy"
+            tests:
+              - not_null
+          - name: property_id
+            description: "Property identifier"
+            tests:
+              - not_null
+          - name: portfolio_id
+            description: "Portfolio this property belongs to"
+            tests:
+              - not_null
+          - name: status
+            description: "Property lifecycle status"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['underwriting', 'due_diligence', 'closed', 'operational']
+          - name: assigned_date
+            description: "When property was assigned to this portfolio"
+            tests:
+              - not_null
+          - name: status_changed_date
+            description: "When status was last updated"
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
           
       # New tables for incentive program integration
       - name: spending_focus_mapping

@@ -1,6 +1,7 @@
 -- models/facts/investor_distributions.sql
 -- dbt model for investor distributions by investor and year
 -- Suppresses periods with zero distributions
+-- UPDATED: Portfolio filtering with company scoping
 
 {{ config(materialized='view') }}
 
@@ -37,8 +38,14 @@ SELECT
 FROM {{ ref('tbl_waterfall_main') }} w
 INNER JOIN hkh_dev.tbl_terms t ON w.portfolio_id = t.portfolio_id
 
--- Suppress periods where investor receives no distribution
-WHERE (w.total_investor * t.percentage_of_investments) > 0
+-- Portfolio filtering: Only include investors for default portfolio of this company
+INNER JOIN {{ source('inputs', 'portfolio_settings') }} ps 
+    ON t.portfolio_id = ps.portfolio_id
+
+WHERE ps.company_id = 1  -- Company scoping for future multi-tenancy
+  AND ps.is_default = TRUE  -- Only include default portfolio
+  -- Suppress periods where investor receives no distribution
+  AND (w.total_investor * t.percentage_of_investments) > 0
 
 -- Order by investor and year for clear waterfall presentation
 ORDER BY 
