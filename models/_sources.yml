@@ -192,6 +192,29 @@ sources:
       - name: spending_focus_mapping
         description: "Maps spending focus categories to improvement types for incentive matching"
         
+      - name: market_parameters
+        description: "Market-level parameters for RLV calculations and filters"
+        columns:
+          - name: id
+            description: "Primary key"
+            tests:
+              - not_null
+              - unique
+          - name: parameter_name
+            description: "Parameter identifier"
+            tests:
+              - not_null
+              - unique
+          - name: parameter_value
+            description: "Numeric parameter value"
+            tests:
+              - not_null
+          - name: parameter_description
+            description: "Human-readable description"
+        freshness:
+          warn_after: {count: 7, period: day}
+          error_after: {count: 30, period: day}
+        
       # (If you have any other tables under inputs that you reference, list them here)
       # - name: some_other_input_table
 

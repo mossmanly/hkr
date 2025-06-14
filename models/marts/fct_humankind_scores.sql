@@ -1,8 +1,9 @@
--- HumanKindScore™ Calculator Model - ORIGINAL WORKING VERSION
--- Back to what was working before we added complexity
+-- HumanKindScore™ Calculator Model - ROBUST EXTENSIBLE VERSION
+-- Maintains sophisticated structure while fixing breaking points
 
 {{ config(
     materialized='table',
+    schema='costar_analysis',
     indexes=[
         {'columns': ['analysis_run_id']},
         {'columns': ['humankind_score']},
@@ -12,6 +13,7 @@
 
 WITH raw_properties AS (
     SELECT * FROM {{ source('costar_analysis', 'raw_properties') }}
+    WHERE (not_ranked_reason IS NULL OR not_ranked_reason = '')
 ),
 
 rlv_calculations AS (
@@ -22,7 +24,6 @@ scoring_weights AS (
     SELECT * FROM {{ ref('int_rlv_assumptions') }}
 ),
 
--- Join raw properties with RLV calculations and scoring weights
 base_data AS (
     SELECT 
         rp.id as property_id,
@@ -37,26 +38,26 @@ base_data AS (
         rp.building_class,
         rp.created_at,
         
-        -- RLV data from your calculator
-        rlv.calculated_rlv,
-        rlv.upside_percentage,
-        rlv.upside_category,
-        rlv.monthly_rent_per_unit,
-        rlv.annual_expense_ratio,
+        -- RLV data from your calculator (handle missing data gracefully)
+        COALESCE(rlv.calculated_rlv, 0) as calculated_rlv,
+        COALESCE(rlv.upside_percentage, 0) as upside_percentage,
+        COALESCE(rlv.upside_category, 'No RLV Data') as upside_category,
+        COALESCE(rlv.monthly_rent_per_unit, 0) as monthly_rent_per_unit,
+        COALESCE(rlv.annual_expense_ratio, 0) as annual_expense_ratio,
         
         -- Scoring weights from your assumptions
-        sw.rlv_weight_pct,
-        sw.scale_weight_pct,
-        sw.cost_weight_pct,
-        sw.location_weight_pct
+        COALESCE(sw.rlv_weight_pct, 0.50) as rlv_weight_pct,
+        COALESCE(sw.scale_weight_pct, 0.20) as scale_weight_pct,
+        COALESCE(sw.cost_weight_pct, 0.15) as cost_weight_pct,
+        COALESCE(sw.location_weight_pct, 0.15) as location_weight_pct
         
     FROM raw_properties rp
     LEFT JOIN rlv_calculations rlv 
         ON rp.id = rlv.property_id
-    CROSS JOIN scoring_weights sw
+    LEFT JOIN scoring_weights sw 
+        ON 1=1
 ),
 
--- Calculate HumanKindScore components
 scoring AS (
     SELECT *,
         
@@ -129,107 +130,95 @@ scoring AS (
             ELSE 'Other Market'
         END as location_reasoning,
         
-        -- 5. Placeholder scores for future enrichment
-        NULL as school_quality_score,
+        -- 5. Placeholder scores for future enrichment (extensible structure)
+        CAST(NULL AS NUMERIC) as school_quality_score,
         'Enrichment Data Not Available' as school_quality_reasoning,
         
-        NULL as healthcare_access_score,
+        CAST(NULL AS NUMERIC) as healthcare_access_score,
         'Enrichment Data Not Available' as healthcare_reasoning,
         
-        NULL as transit_walkability_score,
+        CAST(NULL AS NUMERIC) as transit_walkability_score,
         'Enrichment Data Not Available' as transit_reasoning
         
     FROM base_data
 ),
 
--- Calculate final scores and recommendations
 final_scoring AS (
     SELECT *,
         
         -- Calculate total HumanKindScore using your weighted methodology
         (rlv_score + scale_score + cost_efficiency_score + location_score + 
-         COALESCE(school_quality_score::numeric, 0) + 
-         COALESCE(healthcare_access_score::numeric, 0) + 
-         COALESCE(transit_walkability_score::numeric, 0)) as humankind_score,
+         COALESCE(school_quality_score, 0) + 
+         COALESCE(healthcare_access_score, 0) + 
+         COALESCE(transit_walkability_score, 0)) as humankind_score,
          
         -- Score tier classification (adjusted for your methodology)
         CASE 
             WHEN (rlv_score + scale_score + cost_efficiency_score + location_score + 
-                  COALESCE(school_quality_score::numeric, 0) + 
-                  COALESCE(healthcare_access_score::numeric, 0) + 
-                  COALESCE(transit_walkability_score::numeric, 0)) >= 40 THEN 'Exceptional'
+                  COALESCE(school_quality_score, 0) + 
+                  COALESCE(healthcare_access_score, 0) + 
+                  COALESCE(transit_walkability_score, 0)) >= 40 THEN 'Exceptional'
             WHEN (rlv_score + scale_score + cost_efficiency_score + location_score + 
-                  COALESCE(school_quality_score::numeric, 0) + 
-                  COALESCE(healthcare_access_score::numeric, 0) + 
-                  COALESCE(transit_walkability_score::numeric, 0)) >= 30 THEN 'Excellent'
+                  COALESCE(school_quality_score, 0) + 
+                  COALESCE(healthcare_access_score, 0) + 
+                  COALESCE(transit_walkability_score, 0)) >= 30 THEN 'Excellent'
             WHEN (rlv_score + scale_score + cost_efficiency_score + location_score + 
-                  COALESCE(school_quality_score::numeric, 0) + 
-                  COALESCE(healthcare_access_score::numeric, 0) + 
-                  COALESCE(transit_walkability_score::numeric, 0)) >= 20 THEN 'Good'
+                  COALESCE(school_quality_score, 0) + 
+                  COALESCE(healthcare_access_score, 0) + 
+                  COALESCE(transit_walkability_score, 0)) >= 20 THEN 'Good'
             WHEN (rlv_score + scale_score + cost_efficiency_score + location_score + 
-                  COALESCE(school_quality_score::numeric, 0) + 
-                  COALESCE(healthcare_access_score::numeric, 0) + 
-                  COALESCE(transit_walkability_score::numeric, 0)) >= 10 THEN 'Fair'
+                  COALESCE(school_quality_score, 0) + 
+                  COALESCE(healthcare_access_score, 0) + 
+                  COALESCE(transit_walkability_score, 0)) >= 10 THEN 'Fair'
             ELSE 'Poor'
         END as score_tier,
         
         -- Investment recommendation
         CASE 
             WHEN (rlv_score + scale_score + cost_efficiency_score + location_score + 
-                  COALESCE(school_quality_score::numeric, 0) + 
-                  COALESCE(healthcare_access_score::numeric, 0) + 
-                  COALESCE(transit_walkability_score::numeric, 0)) >= 40 
+                  COALESCE(school_quality_score, 0) + 
+                  COALESCE(healthcare_access_score, 0) + 
+                  COALESCE(transit_walkability_score, 0)) >= 40 
                   AND upside_percentage >= 0.25 THEN 'Strong Buy'
             WHEN (rlv_score + scale_score + cost_efficiency_score + location_score + 
-                  COALESCE(school_quality_score::numeric, 0) + 
-                  COALESCE(healthcare_access_score::numeric, 0) + 
-                  COALESCE(transit_walkability_score::numeric, 0)) >= 30 
+                  COALESCE(school_quality_score, 0) + 
+                  COALESCE(healthcare_access_score, 0) + 
+                  COALESCE(transit_walkability_score, 0)) >= 30 
                   AND upside_percentage >= 0.10 THEN 'Buy'
             WHEN (rlv_score + scale_score + cost_efficiency_score + location_score + 
-                  COALESCE(school_quality_score::numeric, 0) + 
-                  COALESCE(healthcare_access_score::numeric, 0) + 
-                  COALESCE(transit_walkability_score::numeric, 0)) >= 20 THEN 'Consider'
+                  COALESCE(school_quality_score, 0) + 
+                  COALESCE(healthcare_access_score, 0) + 
+                  COALESCE(transit_walkability_score, 0)) >= 20 THEN 'Consider'
             WHEN (rlv_score + scale_score + cost_efficiency_score + location_score + 
-                  COALESCE(school_quality_score::numeric, 0) + 
-                  COALESCE(healthcare_access_score::numeric, 0) + 
-                  COALESCE(transit_walkability_score::numeric, 0)) >= 10 THEN 'Watch'
+                  COALESCE(school_quality_score, 0) + 
+                  COALESCE(healthcare_access_score, 0) + 
+                  COALESCE(transit_walkability_score, 0)) >= 10 THEN 'Watch'
             ELSE 'Pass'
         END as investment_recommendation,
         
         -- Methodology version for tracking
-        'v1.0_basic_costar' as methodology_version,
+        'v1.1_with_disqualification' as methodology_version,
         
         -- Calculation timestamp
         CURRENT_TIMESTAMP as calculated_at,
         
-        -- Detailed calculation breakdown
-        JSON_BUILD_OBJECT(
-            'total_possible_score', 100,
-            'current_max_score', 70,
-            'enrichment_pending', 30,
-            'location_weight', '15%',
-            'units_weight', '20%', 
-            'cost_efficiency_weight', '15%',
-            'rlv_weight', '50%',
-            'school_weight', '0%',
-            'healthcare_weight', '0%',
-            'transit_weight', '0%',
-            'missing_components', ARRAY['school_quality', 'healthcare_access', 'transit_walkability']
-        ) as calculation_details
+        -- Metadata fields (replacing problematic JSON_BUILD_OBJECT)
+        100 as total_possible_score,
+        70 as current_max_score,
+        30 as enrichment_pending
         
     FROM scoring
 ),
 
--- Add recommendation reasons
 final_output AS (
     SELECT *,
         CASE 
             WHEN investment_recommendation = 'Strong Buy' THEN 
-                'High HumanKindScore (' || humankind_score || ') + Strong RLV upside (' || 
-                ROUND((upside_percentage * 100)::numeric, 1) || '%)'
+                'High HumanKindScore (' || ROUND(humankind_score, 1) || ') + Strong RLV upside (' || 
+                ROUND((upside_percentage * 100), 1) || '%)'
             WHEN investment_recommendation = 'Buy' THEN 
-                'Good HumanKindScore (' || humankind_score || ') + Positive RLV upside (' || 
-                ROUND((upside_percentage * 100)::numeric, 1) || '%)'
+                'Good HumanKindScore (' || ROUND(humankind_score, 1) || ') + Positive RLV upside (' || 
+                ROUND((upside_percentage * 100), 1) || '%)'
             WHEN investment_recommendation = 'Consider' THEN 
                 'Decent fundamentals, review RLV analysis and market conditions'
             WHEN investment_recommendation = 'Watch' THEN 
@@ -264,9 +253,11 @@ SELECT
     recommendation_reasons,
     methodology_version,
     calculated_at,
-    calculation_details,
+    total_possible_score,
+    current_max_score,
+    enrichment_pending,
     score_created_at,
     score_updated_at
 FROM final_output
-WHERE property_id IS NOT NULL  -- Ensure we have valid properties
+WHERE property_id IS NOT NULL
 ORDER BY humankind_score DESC

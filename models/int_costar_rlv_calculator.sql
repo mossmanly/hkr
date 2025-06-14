@@ -1,9 +1,37 @@
-WITH rental_assumptions AS (
+{{ config(
+    materialized='view',
+    schema='costar_analysis'
+) }}
+
+WITH market_parameters AS (
     SELECT 
-        1800 as monthly_rent_per_unit,  -- $1,800/month per unit default
-        0.45 as annual_expense_ratio,   -- 45% expense ratio default
-        0.055 as exit_cap_rate,         -- 5.5% cap rate default
-        5 as hold_period_years          -- 5 year hold default
+        MAX(CASE WHEN parameter_name = 'default_monthly_rent_per_unit' THEN parameter_value END) as default_monthly_rent,
+        MAX(CASE WHEN parameter_name = 'hold_period_years' THEN parameter_value END) as hold_period_years,
+        MAX(CASE WHEN parameter_name = 'max_property_price' THEN parameter_value END) as max_property_price,
+        MAX(CASE WHEN parameter_name = 'min_property_units' THEN parameter_value END) as min_property_units
+    FROM {{ source('inputs', 'market_parameters') }}
+),
+
+market_assumptions AS (
+    SELECT 
+        -- Get assumptions from your existing model with proper defaults
+        COALESCE(standard_vacancy_rate, 0.05) as vacancy_rate,
+        COALESCE(standard_opex_ratio, 0.45) as expense_ratio,
+        COALESCE(standard_collections_loss, 0.02) as collections_loss,
+        COALESCE(market_cap_rate, 0.055) as cap_rate
+    FROM {{ ref('int_rlv_assumptions') }}
+    LIMIT 1
+),
+
+combined_assumptions AS (
+    SELECT 
+        ma.*,
+        mp.default_monthly_rent,
+        mp.hold_period_years,
+        mp.max_property_price,
+        mp.min_property_units
+    FROM market_assumptions ma
+    CROSS JOIN market_parameters mp
 ),
 
 property_rlv AS (
@@ -15,39 +43,45 @@ property_rlv AS (
         p.number_of_units,
         p.list_price,
         
-        -- Get property-specific inputs or use defaults
+        -- Get property-specific inputs or use market assumptions
         COALESCE(pi.purchase_price, p.list_price) as acquisition_price,
-        COALESCE(pi.avg_rent_per_unit, ra.monthly_rent_per_unit) as monthly_rent_per_unit,
-        COALESCE(pi.opex_ratio, ra.annual_expense_ratio) as annual_expense_ratio,
-        ra.exit_cap_rate as exit_cap_rate,  -- Use default since not in inputs
-        ra.hold_period_years as hold_period_years,  -- Use default since not in inputs
+        COALESCE(pi.avg_rent_per_unit, ca.default_monthly_rent) as monthly_rent_per_unit,
+        COALESCE(pi.opex_ratio, ca.expense_ratio) as annual_expense_ratio,
+        COALESCE(pi.vacancy_rate, ca.vacancy_rate) as vacancy_rate,
+        COALESCE(pi.collections_loss_rate, ca.collections_loss) as collections_loss,
+        ca.cap_rate as exit_cap_rate,
+        ca.hold_period_years as hold_period_years,
         
-        -- RLV Calculation
+        -- RLV Calculation with proper vacancy and collections adjustments
         (
-            -- Annual NOI
-            (p.number_of_units * COALESCE(pi.avg_rent_per_unit, ra.monthly_rent_per_unit) * 12) * 
-            (1 - COALESCE(pi.opex_ratio, ra.annual_expense_ratio))
-        ) / ra.exit_cap_rate as calculated_rlv,
+            -- Effective Annual NOI
+            (p.number_of_units * COALESCE(pi.avg_rent_per_unit, ca.default_monthly_rent) * 12) * 
+            (1 - COALESCE(pi.vacancy_rate, ca.vacancy_rate)) *
+            (1 - COALESCE(pi.collections_loss_rate, ca.collections_loss)) *
+            (1 - COALESCE(pi.opex_ratio, ca.expense_ratio))
+        ) / ca.cap_rate as calculated_rlv,
         
         -- Upside calculation
         (
             (
                 (
-                    -- Annual NOI
-                    (p.number_of_units * COALESCE(pi.avg_rent_per_unit, ra.monthly_rent_per_unit) * 12) * 
-                    (1 - COALESCE(pi.opex_ratio, ra.annual_expense_ratio))
-                ) / ra.exit_cap_rate
+                    -- Effective Annual NOI
+                    (p.number_of_units * COALESCE(pi.avg_rent_per_unit, ca.default_monthly_rent) * 12) * 
+                    (1 - COALESCE(pi.vacancy_rate, ca.vacancy_rate)) *
+                    (1 - COALESCE(pi.collections_loss_rate, ca.collections_loss)) *
+                    (1 - COALESCE(pi.opex_ratio, ca.expense_ratio))
+                ) / ca.cap_rate
             ) - p.list_price
         ) / p.list_price as upside_percentage
         
     FROM {{ source('costar_analysis', 'raw_properties') }} p
     LEFT JOIN {{ source('inputs', 'property_inputs') }} pi 
         ON p.property_address = pi.property_address
-    CROSS JOIN rental_assumptions ra
+    CROSS JOIN combined_assumptions ca
     WHERE p.list_price > 0 
-      AND p.list_price < 50000000  -- Filter out crazy prices (anything over $50M)
-      AND p.number_of_units > 0
-      AND p.property_address IS NOT NULL  -- Remove any null addresses
+      AND p.list_price < ca.max_property_price
+      AND p.number_of_units >= ca.min_property_units
+      AND p.property_address IS NOT NULL
 )
 
 SELECT 
@@ -60,5 +94,6 @@ SELECT
         WHEN upside_percentage >= 0.0 THEN 'Break Even (0-10%)'
         ELSE 'Overpriced'
     END as upside_category
+    
 FROM property_rlv
 ORDER BY upside_percentage DESC

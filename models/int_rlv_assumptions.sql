@@ -3,14 +3,26 @@
 -- This model extracts average operating assumptions from your existing 4 properties
 -- These assumptions will be applied to CoStar data to calculate RLV for each property
 --
-{{ config(materialized='view') }}
+{{ config(
+    materialized='view',
+    schema='costar_analysis'
+) }}
+
+WITH scoring_weights AS (
+    SELECT 
+        MAX(CASE WHEN parameter_name = 'rlv_weight_pct' THEN parameter_value END) as rlv_weight_pct,
+        MAX(CASE WHEN parameter_name = 'scale_weight_pct' THEN parameter_value END) as scale_weight_pct,
+        MAX(CASE WHEN parameter_name = 'cost_weight_pct' THEN parameter_value END) as cost_weight_pct,
+        MAX(CASE WHEN parameter_name = 'location_weight_pct' THEN parameter_value END) as location_weight_pct
+    FROM {{ source('inputs', 'market_parameters') }}
+)
 
 select 
-    -- Scoring weight configuration (easy to change later)
-    0.50 as rlv_weight_pct,           -- RLV gets 50% of total score
-    0.20 as scale_weight_pct,         -- Unit scale gets 20%
-    0.15 as cost_weight_pct,          -- Cost efficiency gets 15% 
-    0.15 as location_weight_pct,      -- Location gets 15%
+    -- Scoring weight configuration (now from market_parameters instead of hardcoded)
+    MAX(sw.rlv_weight_pct) as rlv_weight_pct,           -- RLV gets 50% of total score
+    MAX(sw.scale_weight_pct) as scale_weight_pct,         -- Unit scale gets 20%
+    MAX(sw.cost_weight_pct) as cost_weight_pct,          -- Cost efficiency gets 15% 
+    MAX(sw.location_weight_pct) as location_weight_pct,      -- Location gets 15%
     
     -- Operating assumptions from your existing 4 properties
     round(avg(vacancy_rate), 4) as standard_vacancy_rate,
@@ -37,7 +49,8 @@ select
     
     current_timestamp as calculated_at
     
-from {{ source('inputs', 'property_inputs') }}
+from {{ source('inputs', 'property_inputs') }} pi
+CROSS JOIN scoring_weights sw
 where rlv_price is not null 
     and avg_rent_per_unit is not null
     and vacancy_rate is not null
