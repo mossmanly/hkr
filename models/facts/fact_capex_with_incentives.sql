@@ -14,6 +14,9 @@ WITH base_capex AS (
   LEFT JOIN {{ source('hkh_dev', 'capex_reserve_mgt') }} r 
     ON c.property_id = r.property_id 
     AND c.year = r.year
+  WHERE c.property_id IN ('P1', 'P2', 'P3', 'P5')  -- Only valid properties
+    AND r.capex_spent IS NOT NULL
+    AND r.capex_spent > 0
 ),
 
 -- Expand spending focus to individual improvement categories
@@ -25,10 +28,16 @@ capex_with_categories AS (
   LEFT JOIN {{ source('hkh_dev', 'capex_spending_focus_mapping') }} m ON c.spending_focus = m.spending_focus
 ),
 
--- Apply incentive programs
+-- Apply incentive programs WITH DEDUPLICATION
 applicable_incentives AS (
-  SELECT 
-    cc.*,
+  SELECT DISTINCT
+    cc.property_id,
+    cc.year,
+    cc.spending_focus,
+    cc.rationale,
+    cc.capex_spent,
+    cc.available_for_capex,
+    cc.total_reserves_raised,
     ip.program_id,
     ip.program_name,
     ip.incentive_structure,
@@ -39,7 +48,7 @@ applicable_incentives AS (
     ip.capture_rate_assumption,
     ip.tips_for_success,
     
-    -- Calculate incentive amount
+    -- Calculate incentive amount (ONCE per program, not per category)
     CASE ip.incentive_structure
       WHEN 'percentage' THEN 
         LEAST(cc.capex_spent * ip.incentive_rate, COALESCE(ip.incentive_cap, 999999))
@@ -67,6 +76,9 @@ applicable_incentives AS (
   LEFT JOIN {{ ref('incentive_programs') }} ip 
     ON ip.improvement_category = cc.improvement_category
     AND ip.funding_stability_score >= 6  -- Only include stable programs
+  WHERE ip.program_id IS NOT NULL  -- Only include rows where we found matching programs
+    AND cc.capex_spent IS NOT NULL  -- Must have actual spending
+    AND cc.capex_spent > 0  -- Must be greater than zero
 ),
 
 -- Aggregate incentives per property/year
@@ -94,6 +106,29 @@ final_capex_with_incentives AS (
     
   FROM applicable_incentives
   GROUP BY 1,2,3,4,5,6
+  
+  UNION ALL
+  
+  -- Include projects with NO incentives (so they still show up)
+  SELECT 
+    bc.property_id,
+    bc.year,
+    bc.spending_focus,
+    bc.rationale,
+    bc.capex_spent,
+    bc.available_for_capex,
+    0 AS total_expected_incentives,
+    0 AS tax_credit_value,
+    0 AS basis_reducing_rebates,
+    bc.capex_spent AS net_capex_cost,
+    0 AS incentive_capture_percentage,
+    'No applicable programs found' AS applicable_programs,
+    'Research additional incentive opportunities' AS success_tips
+  FROM base_capex bc
+  WHERE NOT EXISTS (
+    SELECT 1 FROM applicable_incentives ai 
+    WHERE ai.property_id = bc.property_id AND ai.year = bc.year
+  )
 )
 
 SELECT * FROM final_capex_with_incentives

@@ -194,3 +194,56 @@ sources:
         
       # (If you have any other tables under inputs that you reference, list them here)
       # - name: some_other_input_table
+
+      # ──────────────────────────────────────────────────────────────────────────────
+  #  Source:  costar_analysis.<table_name>
+  #  (all tables here live in schema "costar_analysis" of database "hkh_decision_support_db")
+  # ──────────────────────────────────────────────────────────────────────────────
+  - name: costar_analysis
+    database: hkh_decision_support_db
+    schema: costar_analysis
+    tables:
+      - name: raw_properties
+        description: "Raw CoStar property data uploads"
+        columns:
+          - name: id
+            description: "Unique property identifier"
+            tests:
+              - not_null
+              - unique
+          - name: upload_batch_id
+            description: "Links properties to analysis runs"
+            tests:
+              - not_null
+          - name: number_of_units
+            description: "Number of rental units"
+            tests:
+              - not_null
+          - name: list_price
+            description: "Property listing price"
+          - name: additional_costar_data
+            description: "JSONB field containing additional CoStar export data"
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+          
+      - name: analysis_runs
+        description: "Analysis batch tracking"
+        columns:
+          - name: id
+            description: "Unique analysis run identifier"
+            tests:
+              - not_null
+              - unique
+              
+      - name: enriched_properties
+        description: "Properties with external data enrichment"
+        
+      - name: humankind_scores
+        description: "Calculated HumanKind scores"
+        
+      - name: property_rankings
+        description: "Property rankings within analysis runs"
+        
+      - name: portfolio_summaries
+        description: "Portfolio-level summary analytics"
