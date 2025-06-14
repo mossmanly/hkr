@@ -1,0 +1,129 @@
+version: 2
+
+models:
+  # Staging models (reference these from intermediate models)
+  - name: stg_property_inputs
+    description: "Clean property input data with standardized transformations"
+    columns:
+      - name: property_id
+        description: "Unique property identifier"
+        tests:
+          - not_null
+          - unique
+      - name: company_id
+        description: "Company identifier for multi-tenant scoping"
+        tests:
+          - not_null
+      - name: portfolio_id
+        description: "Portfolio identifier for grouping properties"
+        tests:
+          - not_null
+      - name: purchase_price
+        description: "Property acquisition price"
+        tests:
+          - not_null
+      - name: is_active
+        description: "Flag indicating if property is active in analysis"
+
+  - name: stg_portfolio_settings
+    description: "Clean portfolio configuration and settings"
+    columns:
+      - name: portfolio_id
+        description: "Portfolio identifier"
+        tests:
+          - not_null
+      - name: company_id
+        description: "Company identifier"
+        tests:
+          - not_null
+      - name: is_active
+        description: "Flag indicating if portfolio is active"
+
+  - name: stg_market_parameters
+    description: "Market assumptions and parameters for analysis"
+    columns:
+      - name: parameter_name
+        description: "Name of the market parameter"
+        tests:
+          - not_null
+      - name: parameter_value
+        description: "Value of the market parameter"
+        tests:
+          - not_null
+
+  - name: stg_global_inputs
+    description: "Global configuration settings"
+    columns:
+      - name: company_id
+        description: "Company identifier"
+        tests:
+          - not_null
+      - name: portfolio_id
+        description: "Portfolio identifier"
+
+  # Intermediate models
+  - name: int_property_cash_flows
+    description: "Comprehensive property cash flow projections with multi-year analysis"
+    columns:
+      - name: property_id
+        description: "Property identifier"
+        tests:
+          - not_null
+      - name: cash_flow_year
+        description: "Year of cash flow projection (0 = acquisition, 1-10 = operations)"
+      - name: total_cash_flow
+        description: "Total cash flow for the year including operations and exit proceeds"
+      - name: cash_on_cash_return
+        description: "Annual cash-on-cash return percentage"
+      - name: annual_cap_rate
+        description: "Capitalization rate for the year"
+
+  - name: int_fee_calculations
+    description: "Comprehensive fee calculations for properties and portfolios"
+    columns:
+      - name: property_id
+        description: "Property identifier"
+        tests:
+          - not_null
+      - name: total_annual_fees
+        description: "Total annual fees for the property"
+      - name: management_fee_per_unit
+        description: "Management fee calculated per unit"
+
+  - name: int_loan_schedules
+    description: "Detailed loan amortization schedules"
+    columns:
+      - name: property_id
+        description: "Property identifier"
+        tests:
+          - not_null
+      - name: payment_number
+        description: "Payment sequence number"
+      - name: beginning_balance
+        description: "Loan balance at beginning of period"
+      - name: ending_balance
+        description: "Loan balance at end of period"
+
+  - name: int_property_valuations
+    description: "Multi-approach property valuation analysis"
+    columns:
+      - name: property_id
+        description: "Property identifier"
+        tests:
+          - not_null
+      - name: market_value_mid_point
+        description: "Market value using average cap rate"
+      - name: investment_quality_rating
+        description: "Quality rating based on cap rate performance"
+
+  - name: int_valuation_assumptions
+    description: "Centralized valuation assumptions and parameters"
+    columns:
+      - name: assumption_category
+        description: "Category of assumption (market_rates, portfolio_strategy, etc.)"
+      - name: assumption_name
+        description: "Name of the assumption"
+        tests:
+          - not_null
+      - name: assumption_value
+        description: "Value of the assumption"

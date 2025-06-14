@@ -1,4 +1,4 @@
--- models/fact_property_cash_flow_base.sql
+-- models/fact_property_cash_flow.sql
 -- ENHANCED MODEL: Cash flows WITH CapEx float income using reserve view
 -- UPDATED: Portfolio filtering with company scoping
 
