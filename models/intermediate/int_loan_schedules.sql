@@ -1,6 +1,21 @@
-WITH recursive inputs AS (
+{{
+  config(
+    materialized='table',
+    indexes=[
+      {'columns': ['property_id'], 'unique': false},
+      {'columns': ['year'], 'unique': false}
+    ]
+  )
+}}
+
+-- Extract loan amortization and refinancing logic from staging layer
+-- Preserves original sophisticated business logic with refi handling
+
+WITH recursive loan_inputs AS (
   SELECT 
     property_id,
+    company_id,
+    portfolio_id,
     purchase_price,
     ds_ltv,
     ds_term,
@@ -10,14 +25,19 @@ WITH recursive inputs AS (
     ds_refi_int,
     ds_refi_year,
     ROUND(purchase_price * ds_ltv, 0) AS original_loan_amount
-  FROM inputs.property_inputs
+  FROM hkh_dev.stg_property_inputs
+  WHERE company_id = 1  -- Company scoping
 ),
+
 years AS (
   SELECT generate_series(1, 30) AS year
 ),
+
 base_schedule AS (
   SELECT 
     i.property_id,
+    i.company_id,
+    i.portfolio_id,
     y.year,
     i.purchase_price,
     i.ds_refi_year,
@@ -28,9 +48,10 @@ base_schedule AS (
     i.ds_refi_ltv,
     i.ds_refi_term,
     i.ds_refi_int
-  FROM inputs i 
+  FROM loan_inputs i 
   CROSS JOIN years y
 ),
+
 loan_terms AS (
   SELECT 
     *,
@@ -49,6 +70,7 @@ loan_terms AS (
     END AS active_rate
   FROM base_schedule
 ),
+
 payment_calcs AS (
   SELECT 
     *,
@@ -76,10 +98,13 @@ payment_calcs AS (
     END AS loan_amount_for_year
   FROM loan_terms
 ),
+
 amort AS (
-  -- Year 1
+  -- Year 1 base case
   SELECT 
     property_id,
+    company_id,
+    portfolio_id,
     year,
     annual_payment,
     ROUND(original_loan_amount, 0) AS starting_balance,
@@ -94,8 +119,11 @@ amort AS (
 
   UNION ALL
 
+  -- Recursive years 2-30
   SELECT 
     pc.property_id,
+    pc.company_id,
+    pc.portfolio_id,
     pc.year,
     pc.annual_payment,
     -- Starting balance (handle refi transition)
@@ -132,8 +160,11 @@ amort AS (
   WHERE a.year < 30 
     AND (a.ending_balance > 0 OR pc.year = pc.ds_refi_year)
 )
+
 SELECT 
   property_id,
+  company_id,
+  portfolio_id,
   year,
   annual_payment,
   starting_balance,
@@ -142,6 +173,21 @@ SELECT
   ending_balance,
   active_rate,
   refi_proceeds,
-  CASE WHEN year = ds_refi_year THEN 'REFI YEAR' ELSE '' END AS notes
+  CASE WHEN year = ds_refi_year THEN 'REFI YEAR' ELSE '' END AS refi_notes,
+  
+  -- Additional business metrics
+  CASE WHEN year = 1 THEN TRUE ELSE FALSE END AS is_first_year,
+  CASE WHEN ending_balance <= 0 AND year != ds_refi_year THEN TRUE ELSE FALSE END AS is_final_year,
+  CASE WHEN year = ds_refi_year THEN TRUE ELSE FALSE END AS is_refi_year,
+  
+  -- Monthly equivalents for detailed analysis
+  ROUND(annual_payment / 12.0, 0) AS monthly_payment,
+  ROUND(interest_payment / 12.0, 0) AS monthly_interest,
+  ROUND(principal_payment / 12.0, 0) AS monthly_principal,
+  
+  -- Metadata
+  CURRENT_TIMESTAMP AS calculated_at,
+  'int_loan_schedules' AS model_source
+  
 FROM amort 
 ORDER BY property_id, year

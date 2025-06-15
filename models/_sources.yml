@@ -11,8 +11,104 @@ sources:
     schema: hkh_dev
     tables:
       - name: tbl_terms
+        description: "Loan terms and financing parameters"
+      - name: capex_spending_focus_mapping
+        description: "Maps spending focus categories to improvement types for incentive matching"
+        
       - name: tbl_hurdle_tiers
+        description: "Investment hurdle rate tiers by risk/market"
+        
       - name: fact_property_cash_flow
+        description: "Core property cash flow calculations and projections"
+        
+      - name: capex_reserve_mgt
+        description: "Reserve fund management, interest income, and spending tracking"
+        columns:
+          - name: property_id
+            description: "Links to property being modeled"
+            tests:
+              - not_null
+          - name: year
+            description: "Year of hold period"
+            tests:
+              - not_null
+          - name: total_reserves_raised
+            description: "Annual reserves contributed (usually consistent)"
+            tests:
+              - not_null
+          - name: float_interest_rate
+            description: "Interest rate earned on reserve balance"
+            tests:
+              - not_null
+          - name: capex_spent
+            description: "Actual capex expenditure for the year"
+            tests:
+              - not_null
+          - name: reserve_status
+            description: "Health of reserve fund relative to spending needs"
+            tests:
+              - accepted_values:
+                  values: ['ADEQUATE', 'SHORTFALL', 'ABUNDANT']
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+        
+      # Incentive program management tables (created by our new models)
+      - name: incentive_programs
+        description: "Master table of sustainability incentive programs with rich context"
+        columns:
+          - name: program_id
+            description: "Unique identifier for each incentive program"
+            tests:
+              - not_null
+              - unique
+          - name: jurisdiction_level
+            description: "Level of government: federal, state, county, city, utility"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['federal', 'state', 'county', 'city', 'utility']
+          - name: tax_treatment
+            description: "How incentive affects taxes: reduces_basis, tax_credit, taxable_income"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['reduces_basis', 'tax_credit', 'taxable_income', 'tax_deductible']
+          - name: funding_stability_score
+            description: "Program stability rating 1-10 (10 = most stable)"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: [1,2,3,4,5,6,7,8,9,10]
+                  
+      - name: geographic_program_eligibility
+        description: "Geographic eligibility mapping for zip codes to program access"
+        columns:
+          - name: zip_code
+            description: "5-digit ZIP code"
+            tests:
+              - not_null
+          - name: state
+            description: "2-letter state code"
+            tests:
+              - not_null
+              
+      - name: program_geographic_requirements
+        description: "Defines geographic requirements for each incentive program"
+        
+      - name: property_locations
+        description: "Property location data for geographic eligibility determination"
+        columns:
+          - name: property_id
+            description: "Unique property identifier"
+            tests:
+              - not_null
+              - unique
+          - name: zip_code
+            description: "Property ZIP code for program eligibility"
+            tests:
+              - not_null
+              
       # (If you have any other tables under hkh_dev that you reference, list them here)
       # - name: another_table_in_hkh_dev
 
@@ -25,6 +121,277 @@ sources:
     schema: inputs
     tables:
       - name: property_inputs
+        description: "Core property characteristics and acquisition assumptions"
+        columns:
+          - name: property_id
+            description: "Unique property identifier"
+            tests:
+              - not_null
+              - unique
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 3, period: day}
+          
       - name: capex_factors
+        description: "Annual capex spending factors by property and improvement focus area"
+        columns:
+          - name: property_id
+            description: "Links to property being modeled"
+            tests:
+              - not_null
+          - name: year
+            description: "Year of hold period (1, 2, 3, etc.)"
+            tests:
+              - not_null
+          - name: capex_factor
+            description: "Percentage of property value to spend on capex this year"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: [0.0]
+                  quote: false
+                  severity: warn  # Allow non-zero values but warn on zero
+          - name: spending_focus
+            description: "Category of improvements planned for this year"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: 
+                    - 'Snap Renos + Emergency Repairs'
+                    - 'Snap Renos + Maintenance'
+                    - 'Roofing + Final Snap Renos'
+                    - 'HVAC Systems + Maintenance'
+                    - 'Windows + Weatherization'
+                    - 'Major Systems'
+                    - 'Flooring + Interior'
+                    - 'Exterior + Structural'
+                    - 'Energy Efficiency'
+                    - 'Preventive Maintenance'
+          - name: rationale
+            description: "Business reasoning for this year's capex focus"
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+          
+      - name: global_inputs
+        description: "Market assumptions and global parameters for modeling"
+        columns:
+          - name: input_name
+            description: "Parameter name (e.g., 'inflation_rate', 'cap_rate')"
+            tests:
+              - not_null
+          - name: input_value
+            description: "Numeric value for the parameter"
+            tests:
+              - not_null
+        freshness:
+          warn_after: {count: 7, period: day}
+          error_after: {count: 30, period: day}
+
+      # NEW PORTFOLIO MANAGEMENT TABLES
+      - name: portfolio_settings
+        description: "Portfolio configuration and default settings"
+        columns:
+          - name: company_id
+            description: "Company identifier for multi-tenancy"
+            tests:
+              - not_null
+          - name: portfolio_id
+            description: "Unique portfolio identifier"
+            tests:
+              - not_null
+          - name: is_default
+            description: "Whether this portfolio is the default for reporting"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: [true, false]
+          - name: portfolio_name
+            description: "Human-readable portfolio name"
+          - name: is_active
+            description: "Whether this portfolio is currently active"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: [true, false]
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+
+      - name: property_portfolio_assignments
+        description: "Maps properties to portfolios with lifecycle status tracking"
+        columns:
+          - name: company_id
+            description: "Company identifier for multi-tenancy"
+            tests:
+              - not_null
+          - name: property_id
+            description: "Property identifier"
+            tests:
+              - not_null
+          - name: portfolio_id
+            description: "Portfolio this property belongs to"
+            tests:
+              - not_null
+          - name: status
+            description: "Property lifecycle status"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['underwriting', 'due_diligence', 'closed', 'operational']
+          - name: assigned_date
+            description: "When property was assigned to this portfolio"
+            tests:
+              - not_null
+          - name: status_changed_date
+            description: "When status was last updated"
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+          
+      # New tables for incentive program integration
+      - name: spending_focus_mapping
+        description: "Maps spending focus categories to improvement types for incentive matching"
+        
+      - name: market_parameters
+        description: "Market-level parameters for RLV calculations and filters"
+        columns:
+          - name: id
+            description: "Primary key"
+            tests:
+              - not_null
+              - unique
+          - name: parameter_name
+            description: "Parameter identifier"
+            tests:
+              - not_null
+              - unique
+          - name: parameter_value
+            description: "Numeric parameter value"
+            tests:
+              - not_null
+          - name: parameter_description
+            description: "Human-readable description"
+        freshness:
+          warn_after: {count: 7, period: day}
+          error_after: {count: 30, period: day}
+
+      # PHASE 4 ADDITIONS - Required for mart models
+      - name: company_waterfall_settings
+        description: "Company-level waterfall distribution settings and parameters"
+        columns:
+          - name: company_id
+            description: "Company identifier for multi-tenancy"
+            tests:
+              - not_null
+          - name: portfolio_id
+            description: "Portfolio identifier"
+            tests:
+              - not_null
+          - name: sponsor_name
+            description: "Name of the sponsor/GP entity"
+          - name: investor_name
+            description: "Name of the investor/LP entity"
+          - name: base_management_fee
+            description: "Base management fee percentage"
+          - name: promote_threshold_irr
+            description: "IRR threshold for sponsor promote"
+          - name: promote_percentage
+            description: "Sponsor promote percentage above threshold"
+          - name: investor_percentage
+            description: "Investor percentage of distributions"
+          - name: preferred_return_rate
+            description: "Preferred return rate for investors"
+        freshness:
+          warn_after: {count: 7, period: day}
+          error_after: {count: 30, period: day}
+
+      - name: global_constants
+        description: "Global constants and configuration parameters"
+        columns:
+          - name: constant_name
+            description: "Name of the global constant"
+            tests:
+              - not_null
+          - name: constant_value
+            description: "Value of the global constant"
+          - name: description
+            description: "Description of what this constant controls"
+        freshness:
+          warn_after: {count: 7, period: day}
+          error_after: {count: 30, period: day}
+
+      - name: unit_mix_rents
+        description: "Unit mix and rent roll data by property"
+        columns:
+          - name: property_id
+            description: "Property identifier"
+            tests:
+              - not_null
+          - name: unit_type
+            description: "Type of unit (1BR, 2BR, etc.)"
+          - name: unit_count
+            description: "Number of units of this type"
+          - name: current_rent
+            description: "Current rent for this unit type"
+          - name: market_rent
+            description: "Market rent for this unit type"
+        freshness:
+          warn_after: {count: 7, period: day}
+          error_after: {count: 30, period: day}
+        
       # (If you have any other tables under inputs that you reference, list them here)
       # - name: some_other_input_table
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  #  Source:  costar_analysis.<table_name>
+  #  (all tables here live in schema "costar_analysis" of database "hkh_decision_support_db")
+  # ──────────────────────────────────────────────────────────────────────────────
+  - name: costar_analysis
+    database: hkh_decision_support_db
+    schema: costar_analysis
+    tables:
+      - name: raw_properties
+        description: "Raw CoStar property data uploads"
+        columns:
+          - name: id
+            description: "Unique property identifier"
+            tests:
+              - not_null
+              - unique
+          - name: upload_batch_id
+            description: "Links properties to analysis runs"
+            tests:
+              - not_null
+          - name: number_of_units
+            description: "Number of rental units"
+            tests:
+              - not_null
+          - name: list_price
+            description: "Property listing price"
+          - name: additional_costar_data
+            description: "JSONB field containing additional CoStar export data"
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+          
+      - name: analysis_runs
+        description: "Analysis batch tracking"
+        columns:
+          - name: id
+            description: "Unique analysis run identifier"
+            tests:
+              - not_null
+              - unique
+              
+      - name: enriched_properties
+        description: "Properties with external data enrichment"
+        
+      - name: humankind_scores
+        description: "Calculated HumanKind scores"
+        
+      - name: property_rankings
+        description: "Property rankings within analysis runs"
+        
+      - name: portfolio_summaries
+        description: "Portfolio-level summary analytics"
