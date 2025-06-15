@@ -1,4 +1,4 @@
--- File: models/facts/fact_capex_with_incentives.sql
+-- models/marts/finance/fact_capex_with_incentives.sql
 {{ config(materialized='table') }}
 
 WITH base_capex AS (
@@ -9,9 +9,9 @@ WITH base_capex AS (
     c.rationale,
     r.capex_spent,
     r.available_for_capex,
-    r.total_reserves_raised
-  FROM {{ source('inputs', 'capex_factors') }} c
-  LEFT JOIN {{ source('hkh_dev', 'capex_reserve_mgt') }} r 
+    r.cumulative_reserves_raised
+  FROM hkh_dev.stg_capex_factors c
+  LEFT JOIN {{ ref('int_capex_reserves') }} r 
     ON c.property_id = r.property_id 
     AND c.year = r.year
   WHERE c.property_id IN ('P1', 'P2', 'P3', 'P5')  -- Only valid properties
@@ -25,7 +25,7 @@ capex_with_categories AS (
     c.*,
     UNNEST(m.improvement_categories) AS improvement_category
   FROM base_capex c
-  LEFT JOIN {{ source('hkh_dev', 'capex_spending_focus_mapping') }} m ON c.spending_focus = m.spending_focus
+  LEFT JOIN hkh_dev.capex_spending_focus_mapping m ON c.spending_focus = m.spending_focus
 ),
 
 -- Apply incentive programs WITH DEDUPLICATION
@@ -37,7 +37,7 @@ applicable_incentives AS (
     cc.rationale,
     cc.capex_spent,
     cc.available_for_capex,
-    cc.total_reserves_raised,
+    cc.cumulative_reserves_raised,
     ip.program_id,
     ip.program_name,
     ip.incentive_structure,
@@ -73,7 +73,7 @@ applicable_incentives AS (
     END AS expected_incentive_amount
     
   FROM capex_with_categories cc
-  LEFT JOIN {{ ref('incentive_programs') }} ip 
+  LEFT JOIN hkh_dev.incentive_programs ip 
     ON ip.improvement_category = cc.improvement_category
     AND ip.funding_stability_score >= 6  -- Only include stable programs
   WHERE ip.program_id IS NOT NULL  -- Only include rows where we found matching programs

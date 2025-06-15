@@ -1,3 +1,5 @@
+--models/int_costar_rlv_calculator.sql
+
 {{ config(
     materialized='view',
     schema='costar_analysis'

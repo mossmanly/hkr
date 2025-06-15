@@ -1,7 +1,6 @@
 version: 2
 
 sources:
-
   # ──────────────────────────────────────────────────────────────────────────────
   #  Source:  hkh_dev.<table_name>
   #  (all tables here live in schema "hkh_dev" of database "hkh_decision_support_db")
@@ -12,14 +11,152 @@ sources:
     tables:
       - name: tbl_terms
         description: "Loan terms and financing parameters"
+        
+      - name: stg_terms
+        description: "Staging table for investor terms and equity contributions with calculated percentages"
+        columns:
+          - name: investor_serial
+            description: "Unique investor identifier"
+            tests:
+              - not_null
+          - name: portfolio_id
+            description: "Portfolio identifier for multi-portfolio architecture"
+            tests:
+              - not_null
+          - name: first_name
+            description: "Investor first name"
+          - name: last_name
+            description: "Investor last name"
+          - name: equity_contributed
+            description: "Amount of equity contributed by investor"
+            tests:
+              - not_null
+          - name: percentage_of_investments
+            description: "Pre-calculated percentage of total equity pool"
+          - name: staging_loaded_at
+            description: "Timestamp when staging data was loaded"
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+
+      - name: stg_property_inputs
+        description: "Staging table for property acquisition data and characteristics"
+        columns:
+          - name: property_id
+            description: "Unique property identifier"
+            tests:
+              - not_null
+              - unique
+          - name: purchase_price
+            description: "Property acquisition price"
+            tests:
+              - not_null
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+      - name: stg_capex_factors
+        description: "Staging table for annual capex spending factors by property and improvement focus area"
+        columns:
+          - name: property_id
+            description: "Links to property being modeled"
+            tests:
+              - not_null
+          - name: year
+            description: "Year of hold period (1, 2, 3, etc.)"
+            tests:
+              - not_null
+          - name: capex_factor
+            description: "Percentage of property value to spend on capex this year"
+            tests:
+              - not_null
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+      - name: stg_hurdle_tiers
+        description: "Staging table for hurdle rate tiers and investor/sponsor splits"
+        columns:
+          - name: hurdle_id
+            description: "Unique hurdle tier identifier"
+            tests:
+              - not_null
+          - name: irr_range_high
+            description: "Upper IRR threshold for this hurdle tier"
+            tests:
+              - not_null
+          - name: investor_share
+            description: "Investor percentage for this hurdle tier"
+            tests:
+              - not_null
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+
+      - name: stg_property_portfolio_assignments
+        description: "Staging table for property-to-portfolio assignments with lifecycle tracking"
+        columns:
+          - name: assignment_id
+            description: "Unique assignment identifier"
+            tests:
+              - not_null
+              - unique
+          - name: company_id
+            description: "Company identifier for multi-tenancy"
+            tests:
+              - not_null
+          - name: portfolio_id
+            description: "Portfolio identifier"
+            tests:
+              - not_null
+          - name: property_id
+            description: "Property identifier"
+            tests:
+              - not_null
+          - name: assignment_status
+            description: "Current assignment status"
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+
+      - name: stg_portfolio_settings
+        description: "Staging table for portfolio configuration and settings"
+        columns:
+          - name: company_id
+            description: "Company identifier for multi-tenancy"
+            tests:
+              - not_null
+          - name: portfolio_id
+            description: "Portfolio identifier"
+            tests:
+              - not_null
+          - name: is_default
+            description: "Whether this portfolio is the default"
+            tests:
+              - not_null
+        freshness:
+          warn_after: {count: 1, period: day}
+          error_after: {count: 7, period: day}
+
+      - name: fact_property_cash_flow
+        description: "Core property cash flow calculations and projections (view)"
+        columns:
+          - name: property_id
+            description: "Property identifier"
+            tests:
+              - not_null
+          - name: year
+            description: "Operational year"
+            tests:
+              - not_null
+          - name: noi
+            description: "Net operating income"
+          - name: portfolio_id
+            description: "Portfolio identifier"
+        
       - name: capex_spending_focus_mapping
         description: "Maps spending focus categories to improvement types for incentive matching"
         
       - name: tbl_hurdle_tiers
         description: "Investment hurdle rate tiers by risk/market"
-        
-      - name: fact_property_cash_flow
-        description: "Core property cash flow calculations and projections"
         
       - name: capex_reserve_mgt
         description: "Reserve fund management, interest income, and spending tracking"
@@ -108,9 +245,6 @@ sources:
             description: "Property ZIP code for program eligibility"
             tests:
               - not_null
-              
-      # (If you have any other tables under hkh_dev that you reference, list them here)
-      # - name: another_table_in_hkh_dev
 
   # ──────────────────────────────────────────────────────────────────────────────
   #  Source:  inputs.<table_name>
@@ -150,7 +284,7 @@ sources:
               - accepted_values:
                   values: [0.0]
                   quote: false
-                  severity: warn  # Allow non-zero values but warn on zero
+                  severity: warn
           - name: spending_focus
             description: "Category of improvements planned for this year"
             tests:
@@ -188,7 +322,6 @@ sources:
           warn_after: {count: 7, period: day}
           error_after: {count: 30, period: day}
 
-      # NEW PORTFOLIO MANAGEMENT TABLES
       - name: portfolio_settings
         description: "Portfolio configuration and default settings"
         columns:
@@ -249,7 +382,6 @@ sources:
           warn_after: {count: 1, period: day}
           error_after: {count: 7, period: day}
           
-      # New tables for incentive program integration
       - name: spending_focus_mapping
         description: "Maps spending focus categories to improvement types for incentive matching"
         
@@ -276,7 +408,6 @@ sources:
           warn_after: {count: 7, period: day}
           error_after: {count: 30, period: day}
 
-      # PHASE 4 ADDITIONS - Required for mart models
       - name: company_waterfall_settings
         description: "Company-level waterfall distribution settings and parameters"
         columns:
@@ -339,9 +470,6 @@ sources:
         freshness:
           warn_after: {count: 7, period: day}
           error_after: {count: 30, period: day}
-        
-      # (If you have any other tables under inputs that you reference, list them here)
-      # - name: some_other_input_table
 
   # ──────────────────────────────────────────────────────────────────────────────
   #  Source:  costar_analysis.<table_name>
@@ -394,4 +522,4 @@ sources:
         description: "Property rankings within analysis runs"
         
       - name: portfolio_summaries
-        description: "Portfolio-level summary analytics"
+        description: "Portfolio-level summary analytics" 

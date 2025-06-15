@@ -1,4 +1,4 @@
--- models/management_fee_calc.sql
+-- models/intermediate/int_management_fee_calc.sql
 -- MANAGEMENT FEE LOGIC: Dynamic sponsor promote checking
 
 {{ config(materialized='table') }}
@@ -17,8 +17,8 @@ sponsor_distributions AS (
     SELECT 
         portfolio_id,
         year,
-        total_sponsor
-    FROM {{ ref('tbl_waterfall_main') }}
+        total_sponsor 
+    FROM hkh_dev.fact_portfolio_waterfall
 ),
 
 -- Determine cutoff year (first year sponsor promote >= management fee)

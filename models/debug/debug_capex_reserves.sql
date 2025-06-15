@@ -10,7 +10,7 @@ WITH step1_properties AS (
         unit_count,
         capex_per_unit,
         unit_count * capex_per_unit AS total_reserves_raised
-    FROM inputs.property_inputs
+    FROM {{ source('hkh_dev', 'stg_property_inputs') }}
 ),
 
 -- Test 2: Just get capex factors
@@ -19,7 +19,7 @@ step2_capex_factors AS (
         property_id,
         year,
         capex_factor
-    FROM inputs.capex_factors
+    FROM {{ source('hkh_dev', 'stg_capex_factors') }}
 ),
 
 -- Test 3: Try the join
@@ -47,4 +47,4 @@ SELECT
     capex_spent,
     'debug_step_3' as debug_info
 FROM step3_joined
-ORDER BY property_id, year
+ORDER BY property_id, year 
