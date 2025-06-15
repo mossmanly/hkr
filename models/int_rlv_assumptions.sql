@@ -14,7 +14,7 @@ WITH scoring_weights AS (
         MAX(CASE WHEN parameter_name = 'scale_weight_pct' THEN parameter_value END) as scale_weight_pct,
         MAX(CASE WHEN parameter_name = 'cost_weight_pct' THEN parameter_value END) as cost_weight_pct,
         MAX(CASE WHEN parameter_name = 'location_weight_pct' THEN parameter_value END) as location_weight_pct
-    FROM {{ source('inputs', 'market_parameters') }}
+    FROM hkh_dev.stg_market_parameters
 )
 
 select 
@@ -49,7 +49,7 @@ select
     
     current_timestamp as calculated_at
     
-from {{ source('inputs', 'property_inputs') }} pi
+from hkh_dev.stg_property_inputs pi
 CROSS JOIN scoring_weights sw
 where rlv_price is not null 
     and avg_rent_per_unit is not null

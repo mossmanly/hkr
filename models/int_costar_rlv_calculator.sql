@@ -9,7 +9,7 @@ WITH market_parameters AS (
         MAX(CASE WHEN parameter_name = 'hold_period_years' THEN parameter_value END) as hold_period_years,
         MAX(CASE WHEN parameter_name = 'max_property_price' THEN parameter_value END) as max_property_price,
         MAX(CASE WHEN parameter_name = 'min_property_units' THEN parameter_value END) as min_property_units
-    FROM {{ source('inputs', 'market_parameters') }}
+    FROM hkh_dev.stg_market_parameters
 ),
 
 market_assumptions AS (
@@ -75,7 +75,7 @@ property_rlv AS (
         ) / p.list_price as upside_percentage
         
     FROM {{ source('costar_analysis', 'raw_properties') }} p
-    LEFT JOIN {{ source('inputs', 'property_inputs') }} pi 
+    LEFT JOIN hkh_dev.stg_property_inputs pi 
         ON p.property_address = pi.property_address
     CROSS JOIN combined_assumptions ca
     WHERE p.list_price > 0 

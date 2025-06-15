@@ -59,10 +59,10 @@ SELECT
     ) AS investor_total
 
 FROM {{ ref('fact_portfolio_waterfall') }} w
-INNER JOIN {{ source('hkh_dev', 'tbl_terms') }} t ON w.portfolio_id = t.portfolio_id
+INNER JOIN hkh_dev.stg_terms t ON w.portfolio_id = t.portfolio_id
 
 -- Portfolio filtering: Only include investors for default portfolio of this company
-INNER JOIN {{ source('inputs', 'portfolio_settings') }} ps 
+INNER JOIN hkh_dev.stg_portfolio_settings ps 
     ON t.portfolio_id = ps.portfolio_id
 
 WHERE ps.company_id = 1  -- Company scoping for future multi-tenancy

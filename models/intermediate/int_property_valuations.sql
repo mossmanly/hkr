@@ -23,7 +23,7 @@ WITH base_properties AS (
     opex_ratio,
     gross_annual_income,
     price_per_unit
-  FROM {{ ref('stg_property_inputs') }}
+  FROM hkh_dev.stg_property_inputs
 ),
 
 market_parameters AS (
@@ -32,7 +32,7 @@ market_parameters AS (
     MAX(CASE WHEN parameter_name = 'cap_rate_range_high' THEN parameter_value ELSE 0.08 END) AS market_cap_rate_high,
     MAX(CASE WHEN parameter_name = 'annual_rent_growth' THEN parameter_value ELSE 0.03 END) AS annual_rent_growth,
     MAX(CASE WHEN parameter_name = 'exit_cap_rate' THEN parameter_value ELSE 0.075 END) AS exit_cap_rate
-  FROM {{ ref('stg_market_parameters') }}
+  FROM hkh_dev.stg_market_parameters
 ),
 
 -- Property valuation calculations

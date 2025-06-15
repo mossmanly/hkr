@@ -21,7 +21,7 @@ WITH base_properties AS (
     purchase_price,
     unit_count,
     gross_annual_income  -- This exists in staging!
-  FROM {{ ref('stg_property_inputs') }}
+  FROM hkh_dev.stg_property_inputs
 ),
 
 portfolio_settings AS (
@@ -33,7 +33,7 @@ portfolio_settings AS (
     0.08 AS management_fee_rate,  -- Default since column doesn't exist
     is_default,
     is_active
-  FROM {{ ref('stg_portfolio_settings') }}
+  FROM hkh_dev.stg_portfolio_settings
   WHERE is_active = TRUE
 ),
 

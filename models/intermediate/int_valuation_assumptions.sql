@@ -17,7 +17,7 @@ WITH market_parameters AS (
     parameter_value,
     parameter_description,
     effective_date
-  FROM {{ ref('stg_market_parameters') }}
+  FROM hkh_dev.stg_market_parameters
 ),
 
 portfolio_settings AS (
@@ -27,7 +27,7 @@ portfolio_settings AS (
     portfolio_name,
     investment_strategy,
     is_default
-  FROM {{ ref('stg_portfolio_settings') }}
+  FROM hkh_dev.stg_portfolio_settings
   WHERE is_active = TRUE
 ),
 
