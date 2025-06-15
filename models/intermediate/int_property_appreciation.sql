@@ -1,4 +1,4 @@
--- property_appreciation.sql (dbt model)
+-- models/intermediate/int_property_appreciation.sql
 -- Multi-scenario property appreciation calculator
 -- Generates conservative/baseline/aggressive appreciation for each property by year
 
@@ -9,7 +9,7 @@ WITH year_series AS (
     SELECT 
         property_id,
         year_num
-    FROM {{ source('inputs', 'property_inputs') }}
+    FROM hkh_dev.stg_property_inputs
     CROSS JOIN (
         SELECT ROW_NUMBER() OVER () AS year_num
         FROM (VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),
@@ -37,7 +37,7 @@ appreciation_calculations AS (
         END AS annual_appreciation
         
     FROM year_series ys
-    JOIN {{ source('inputs', 'property_inputs') }} pi
+    JOIN hkh_dev.stg_property_inputs pi
         ON ys.property_id = pi.property_id
     
     UNION ALL
@@ -59,7 +59,7 @@ appreciation_calculations AS (
         END AS annual_appreciation
         
     FROM year_series ys
-    JOIN {{ source('inputs', 'property_inputs') }} pi
+    JOIN hkh_dev.stg_property_inputs pi
         ON ys.property_id = pi.property_id
     
     UNION ALL
@@ -81,7 +81,7 @@ appreciation_calculations AS (
         END AS annual_appreciation
         
     FROM year_series ys
-    JOIN {{ source('inputs', 'property_inputs') }} pi
+    JOIN hkh_dev.stg_property_inputs pi
         ON ys.property_id = pi.property_id
 )
 

@@ -1,3 +1,9 @@
+-- models/intermediate/int_loan_amort_schedule.sql
+-- Sophisticated loan amortization with refi logic
+-- Handles both original loan terms and refinancing transitions
+
+{{ config(materialized='view') }}
+
 WITH recursive inputs AS (
   SELECT 
     property_id,
@@ -10,7 +16,7 @@ WITH recursive inputs AS (
     ds_refi_int,
     ds_refi_year,
     ROUND(purchase_price * ds_ltv, 0) AS original_loan_amount
-  FROM inputs.property_inputs
+  FROM hkh_dev.stg_property_inputs
 ),
 years AS (
   SELECT generate_series(1, 30) AS year
@@ -144,4 +150,4 @@ SELECT
   refi_proceeds,
   CASE WHEN year = ds_refi_year THEN 'REFI YEAR' ELSE '' END AS notes
 FROM amort 
-ORDER BY property_id, year
+ORDER BY property_id, year 

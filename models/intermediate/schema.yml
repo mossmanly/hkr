@@ -85,3 +85,21 @@ models:
         description: "Actual capex expenditure for the year"
       - name: available_for_capex
         description: "Available reserve balance for capex projects"
+
+  - name: int_invested_metrics
+    description: "Investor equity contribution analysis with percentage calculations"
+    columns:
+      - name: investor_serial
+        description: "Unique investor identifier"
+        tests:
+          - not_null
+      - name: first_name
+        description: "Investor first name (or 'Personal Loan' for company loans)"
+      - name: last_name
+        description: "Investor last name (or investor_serial for personal loans)"
+      - name: equity_contributed
+        description: "Amount of equity contributed by investor"
+        tests:
+          - not_null
+      - name: percentage_of_investments
+        description: "Percentage of total equity pool contributed by this investor"

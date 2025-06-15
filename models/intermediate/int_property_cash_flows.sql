@@ -42,7 +42,7 @@ WITH pgi_calc AS (
                     pi.init_turn_rate * (1 + pi.reno_snap) * (10.0/12)
                 ))::numeric, 2
             ) AS pgi
-        FROM hkh_dev.stg_property_inputs pi
+        FROM {{ source('hkh_dev', 'stg_property_inputs') }} pi
         WHERE pi.company_id = 1  -- Company scoping for future multi-tenancy
         
         UNION ALL
