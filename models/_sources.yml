@@ -275,11 +275,75 @@ sources:
         freshness:
           warn_after: {count: 7, period: day}
           error_after: {count: 30, period: day}
+
+      # PHASE 4 ADDITIONS - Required for mart models
+      - name: company_waterfall_settings
+        description: "Company-level waterfall distribution settings and parameters"
+        columns:
+          - name: company_id
+            description: "Company identifier for multi-tenancy"
+            tests:
+              - not_null
+          - name: portfolio_id
+            description: "Portfolio identifier"
+            tests:
+              - not_null
+          - name: sponsor_name
+            description: "Name of the sponsor/GP entity"
+          - name: investor_name
+            description: "Name of the investor/LP entity"
+          - name: base_management_fee
+            description: "Base management fee percentage"
+          - name: promote_threshold_irr
+            description: "IRR threshold for sponsor promote"
+          - name: promote_percentage
+            description: "Sponsor promote percentage above threshold"
+          - name: investor_percentage
+            description: "Investor percentage of distributions"
+          - name: preferred_return_rate
+            description: "Preferred return rate for investors"
+        freshness:
+          warn_after: {count: 7, period: day}
+          error_after: {count: 30, period: day}
+
+      - name: global_constants
+        description: "Global constants and configuration parameters"
+        columns:
+          - name: constant_name
+            description: "Name of the global constant"
+            tests:
+              - not_null
+          - name: constant_value
+            description: "Value of the global constant"
+          - name: description
+            description: "Description of what this constant controls"
+        freshness:
+          warn_after: {count: 7, period: day}
+          error_after: {count: 30, period: day}
+
+      - name: unit_mix_rents
+        description: "Unit mix and rent roll data by property"
+        columns:
+          - name: property_id
+            description: "Property identifier"
+            tests:
+              - not_null
+          - name: unit_type
+            description: "Type of unit (1BR, 2BR, etc.)"
+          - name: unit_count
+            description: "Number of units of this type"
+          - name: current_rent
+            description: "Current rent for this unit type"
+          - name: market_rent
+            description: "Market rent for this unit type"
+        freshness:
+          warn_after: {count: 7, period: day}
+          error_after: {count: 30, period: day}
         
       # (If you have any other tables under inputs that you reference, list them here)
       # - name: some_other_input_table
 
-      # ──────────────────────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────────────────────
   #  Source:  costar_analysis.<table_name>
   #  (all tables here live in schema "costar_analysis" of database "hkh_decision_support_db")
   # ──────────────────────────────────────────────────────────────────────────────

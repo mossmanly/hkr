@@ -1,9 +1,9 @@
--- models/facts/investor_distributions.sql
--- dbt model for investor distributions by investor and year
+-- marts/finance/fact_investor_distributions.sql
+-- Investor distributions by investor and year
 -- Suppresses periods with zero distributions
--- UPDATED: Portfolio filtering with company scoping
+-- Portfolio filtering with company scoping preserved
 
-{{ config(materialized='view') }}
+{{ config(materialized='table') }}
 
 SELECT 
     -- Primary Keys First
@@ -35,8 +35,8 @@ SELECT
     -- Total Distribution for this period
     ROUND(w.total_investor * t.percentage_of_investments, 2) AS investor_total
 
-FROM {{ ref('tbl_waterfall_main') }} w
-INNER JOIN hkh_dev.tbl_terms t ON w.portfolio_id = t.portfolio_id
+FROM {{ ref('fact_portfolio_waterfall') }} w
+INNER JOIN {{ source('hkh_dev', 'tbl_terms') }} t ON w.portfolio_id = t.portfolio_id
 
 -- Portfolio filtering: Only include investors for default portfolio of this company
 INNER JOIN {{ source('inputs', 'portfolio_settings') }} ps 
