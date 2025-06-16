@@ -1,5 +1,5 @@
--- HumanKindScore™ Calculator Model - ROBUST EXTENSIBLE VERSION
--- Maintains sophisticated structure while fixing breaking points
+-- HumanKindScore™ Calculator Model - INTEGRATED WITH RLV CALCULATOR
+-- Now includes proper RLV scoring component
 
 {{ config(
     materialized='table',
@@ -14,9 +14,24 @@
 WITH raw_properties AS (
     SELECT * FROM costar_analysis.raw_properties
     WHERE (not_ranked_reason IS NULL OR not_ranked_reason = '')
+      AND number_of_units > 0
+      AND list_price > 0
+      AND price_per_unit > 0
 ),
 
--- Use static weights since intermediate models don't exist yet
+-- Get RLV calculations from the intermediate model
+rlv_data AS (
+    SELECT 
+        property_id,
+        calculated_rlv,
+        upside_percentage,
+        upside_category,
+        monthly_rent_per_unit,
+        annual_expense_ratio
+    FROM {{ ref('int_costar_rlv_calculator') }}
+),
+
+-- Use static weights
 scoring_weights AS (
     SELECT 
         0.50 as rlv_weight_pct,
@@ -39,16 +54,12 @@ base_data AS (
         rp.building_class,
         rp.created_at,
         
-        -- Placeholder RLV data (since int_costar_rlv_calculator doesn't exist yet)
-        0 as calculated_rlv,
-        0 as upside_percentage,
-        'RLV Calculator Not Available' as upside_category,
-        CASE 
-            WHEN rp.number_of_units > 0 AND rp.list_price > 0 
-            THEN ROUND((rp.list_price / rp.number_of_units * 0.008), 0)
-            ELSE 0 
-        END as monthly_rent_per_unit,
-        0.30 as annual_expense_ratio,
+        -- RLV data from calculator
+        COALESCE(rlv.calculated_rlv, 0) as calculated_rlv,
+        COALESCE(rlv.upside_percentage, 0) as upside_percentage,
+        COALESCE(rlv.upside_category, 'No RLV Data') as upside_category,
+        COALESCE(rlv.monthly_rent_per_unit, 0) as monthly_rent_per_unit,
+        COALESCE(rlv.annual_expense_ratio, 0.45) as annual_expense_ratio,
         
         -- Scoring weights
         sw.rlv_weight_pct,
@@ -57,15 +68,33 @@ base_data AS (
         sw.location_weight_pct
         
     FROM raw_properties rp
+    LEFT JOIN rlv_data rlv ON rp.id = rlv.property_id
     CROSS JOIN scoring_weights sw
 ),
 
 scoring AS (
     SELECT *,
         
-        -- 1. RLV Score (50% weight) - Currently disabled since RLV calc doesn't exist
-        0 as rlv_score,
-        'RLV Calculator Not Available - Scoring Disabled' as rlv_reasoning,
+        -- 1. RLV Score (50% weight) - NOW ENABLED!
+        CASE 
+            WHEN upside_percentage >= 0.50 THEN (50 * rlv_weight_pct)       -- Exceptional upside
+            WHEN upside_percentage >= 0.25 THEN (40 * rlv_weight_pct)       -- Excellent upside
+            WHEN upside_percentage >= 0.10 THEN (30 * rlv_weight_pct)       -- Good upside
+            WHEN upside_percentage >= 0.05 THEN (20 * rlv_weight_pct)       -- Fair upside
+            WHEN upside_percentage >= 0.0 THEN (10 * rlv_weight_pct)        -- Break even
+            WHEN upside_percentage >= -0.10 THEN (5 * rlv_weight_pct)       -- Slight overpay
+            ELSE 0  -- Significantly overpriced
+        END as rlv_score,
+        
+        CASE 
+            WHEN upside_percentage >= 0.50 THEN 'Exceptional RLV Upside (50%+)'
+            WHEN upside_percentage >= 0.25 THEN 'Excellent RLV Upside (25-50%)'
+            WHEN upside_percentage >= 0.10 THEN 'Good RLV Upside (10-25%)'
+            WHEN upside_percentage >= 0.05 THEN 'Fair RLV Upside (5-10%)'
+            WHEN upside_percentage >= 0.0 THEN 'Break Even RLV (0-5%)'
+            WHEN upside_percentage >= -0.10 THEN 'Slight Overpay (-10% to 0%)'
+            ELSE 'Significantly Overpriced (<-10%)'
+        END as rlv_reasoning,
         
         -- 2. Scale Score (20% weight)  
         CASE 
@@ -140,52 +169,56 @@ scoring AS (
 final_scoring AS (
     SELECT *,
         
-        -- Calculate total HumanKindScore (without RLV component for now)
+        -- Calculate total HumanKindScore (NOW WITH RLV!)
         (rlv_score + scale_score + cost_efficiency_score + location_score + 
          COALESCE(school_quality_score, 0) + 
          COALESCE(healthcare_access_score, 0) + 
          COALESCE(transit_walkability_score, 0)) as humankind_score,
          
-        -- Score tier classification (adjusted for reduced scoring without RLV)
+        -- Score tier classification (full scoring range)
         CASE 
             WHEN (rlv_score + scale_score + cost_efficiency_score + location_score + 
                   COALESCE(school_quality_score, 0) + 
                   COALESCE(healthcare_access_score, 0) + 
-                  COALESCE(transit_walkability_score, 0)) >= 20 THEN 'Excellent'
+                  COALESCE(transit_walkability_score, 0)) >= 45 THEN 'Excellent'
             WHEN (rlv_score + scale_score + cost_efficiency_score + location_score + 
                   COALESCE(school_quality_score, 0) + 
                   COALESCE(healthcare_access_score, 0) + 
-                  COALESCE(transit_walkability_score, 0)) >= 15 THEN 'Good'
+                  COALESCE(transit_walkability_score, 0)) >= 35 THEN 'Good'
             WHEN (rlv_score + scale_score + cost_efficiency_score + location_score + 
                   COALESCE(school_quality_score, 0) + 
                   COALESCE(healthcare_access_score, 0) + 
-                  COALESCE(transit_walkability_score, 0)) >= 10 THEN 'Fair'
+                  COALESCE(transit_walkability_score, 0)) >= 25 THEN 'Fair'
             ELSE 'Poor'
         END as score_tier,
         
-        -- Investment recommendation (conservative without RLV data)
+        -- Investment recommendation (now with RLV data)
         CASE 
             WHEN (rlv_score + scale_score + cost_efficiency_score + location_score + 
                   COALESCE(school_quality_score, 0) + 
                   COALESCE(healthcare_access_score, 0) + 
-                  COALESCE(transit_walkability_score, 0)) >= 20 THEN 'Consider'
+                  COALESCE(transit_walkability_score, 0)) >= 40 THEN 'Strong Buy'
             WHEN (rlv_score + scale_score + cost_efficiency_score + location_score + 
                   COALESCE(school_quality_score, 0) + 
                   COALESCE(healthcare_access_score, 0) + 
-                  COALESCE(transit_walkability_score, 0)) >= 15 THEN 'Watch'
+                  COALESCE(transit_walkability_score, 0)) >= 35 THEN 'Consider'
+            WHEN (rlv_score + scale_score + cost_efficiency_score + location_score + 
+                  COALESCE(school_quality_score, 0) + 
+                  COALESCE(healthcare_access_score, 0) + 
+                  COALESCE(transit_walkability_score, 0)) >= 25 THEN 'Watch'
             ELSE 'Pass'
         END as investment_recommendation,
         
         -- Methodology version
-        'v1.2_no_rlv_calc' as methodology_version,
+        'v2.0_with_rlv' as methodology_version,
         
         -- Calculation timestamp
         CURRENT_TIMESTAMP as calculated_at,
         
-        -- Metadata fields
-        50 as total_possible_score,  -- Reduced without RLV component
-        35 as current_max_score,     -- Scale + Cost + Location max
-        25 as enrichment_pending     -- RLV + enrichment data pending
+        -- Updated metadata fields
+        100 as total_possible_score,  -- Full scoring with RLV
+        50 as current_max_score,      -- All current components max
+        50 as enrichment_pending      -- Future enrichment data pending
         
     FROM scoring
 ),
@@ -193,11 +226,13 @@ final_scoring AS (
 final_output AS (
     SELECT *,
         CASE 
+            WHEN investment_recommendation = 'Strong Buy' THEN 
+                'Exceptional opportunity (Score: ' || ROUND(humankind_score, 1) || ') - Strong RLV upside with good fundamentals'
             WHEN investment_recommendation = 'Consider' THEN 
-                'Good fundamentals (Score: ' || ROUND(humankind_score, 1) || ') - RLV analysis pending'
+                'Good opportunity (Score: ' || ROUND(humankind_score, 1) || ') - Solid RLV metrics and fundamentals'
             WHEN investment_recommendation = 'Watch' THEN 
-                'Fair fundamentals (Score: ' || ROUND(humankind_score, 1) || ') - Monitor for improvements'
-            ELSE 'Below target criteria (Score: ' || ROUND(humankind_score, 1) || ')'
+                'Monitor opportunity (Score: ' || ROUND(humankind_score, 1) || ') - Some positives, watch for improvements'
+            ELSE 'Below target criteria (Score: ' || ROUND(humankind_score, 1) || ') - Does not meet investment thresholds'
         END as recommendation_reasons,
         
         CURRENT_TIMESTAMP as score_created_at,
@@ -209,6 +244,22 @@ final_output AS (
 SELECT 
     property_id,
     analysis_run_id,
+    -- Basic property info (for joins and reference)
+    property_address,
+    city,
+    state,
+    number_of_units,
+    list_price,
+    price_per_unit,
+    year_built,
+    building_class,
+    -- RLV components (now included!)
+    calculated_rlv,
+    upside_percentage,
+    upside_category,
+    rlv_score,
+    rlv_reasoning,
+    -- Other scoring components
     location_score,
     location_reasoning,
     scale_score,
@@ -221,6 +272,7 @@ SELECT
     healthcare_reasoning,
     transit_walkability_score,
     transit_reasoning,
+    -- Final scores
     humankind_score,
     score_tier,
     investment_recommendation,
@@ -234,4 +286,4 @@ SELECT
     score_updated_at
 FROM final_output
 WHERE property_id IS NOT NULL
-ORDER BY humankind_score DESC
+ORDER BY humankind_score DESC 

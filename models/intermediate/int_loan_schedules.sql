@@ -1,10 +1,6 @@
 {{
   config(
-    materialized='table',
-    indexes=[
-      {'columns': ['property_id'], 'unique': false},
-      {'columns': ['year'], 'unique': false}
-    ]
+    materialized='view'
   )
 }}
 
@@ -190,4 +186,4 @@ SELECT
   'int_loan_schedules' AS model_source
   
 FROM amort 
-ORDER BY property_id, year
+ORDER BY property_id, year 

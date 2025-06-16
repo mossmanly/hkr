@@ -1,11 +1,6 @@
 {{
   config(
-    materialized='table',
-    indexes=[
-      {'columns': ['property_id'], 'unique': false},
-      {'columns': ['portfolio_id'], 'unique': false},
-      {'columns': ['year'], 'unique': false}
-    ]
+    materialized='view'
   )
 }}
 
@@ -225,4 +220,4 @@ SELECT
     
 FROM cash_flow_calcs
 WHERE company_id = 1
-ORDER BY property_id, year
+ORDER BY property_id, year 
