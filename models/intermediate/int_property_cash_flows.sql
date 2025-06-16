@@ -220,4 +220,4 @@ SELECT
     
 FROM cash_flow_calcs
 WHERE company_id = 1
-ORDER BY property_id, year 
+ORDER BY property_id, year
