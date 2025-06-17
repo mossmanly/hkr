@@ -24,7 +24,7 @@ WITH portfolio_properties AS (
         ROUND(SUM(pcf.capex), 0) AS total_capex_spending,
         ROUND(SUM(pcf.capex_float_income), 0) AS total_capex_float_income
 
-    FROM hkh_dev.int_property_cash_flows pcf
+    FROM {{ ref('int_property_cash_flows') }} pcf
     WHERE pcf.company_id = 1
       AND pcf.year = 1  -- First year only for summary
     GROUP BY pcf.company_id, pcf.portfolio_id
@@ -60,7 +60,7 @@ portfolio_financing AS (
         ROUND(SUM(ls.interest_payment), 0) AS total_first_year_interest,
         ROUND(SUM(ls.principal_payment), 0) AS total_first_year_principal
 
-    FROM hkh_dev.int_loan_schedules ls
+    FROM {{ ref('int_loan_schedules') }} ls
     WHERE ls.company_id = 1
         AND ls.year = 1  -- Only first year for annual summary
     GROUP BY ls.company_id, ls.portfolio_id
@@ -81,7 +81,7 @@ portfolio_fees AS (
         ROUND(AVG(fc.management_fee_rate), 2) AS avg_mgmt_fee_rate,
         ROUND(AVG(fc.management_fee_per_unit), 0) AS avg_mgmt_fee_per_unit
 
-    FROM hkh_dev.int_fee_calculations fc
+    FROM {{ ref('int_fee_calculations') }} fc
     WHERE fc.company_id = 1
     GROUP BY fc.company_id, fc.portfolio_id
 ),
@@ -268,4 +268,4 @@ SELECT
 FROM portfolio_analysis pa
 WHERE pa.company_id = 1  -- Portfolio architecture filtering
 
-ORDER BY pa.portfolio_id
+ORDER BY pa.portfolio_id 

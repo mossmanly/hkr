@@ -9,6 +9,7 @@
     - No business logic changes - preserved all calculations exactly
     - Updated references to use staging tables and working models
     - Portfolio filtering and company scoping maintained
+    - Fixed column references to match actual int_property_cash_flows schema
 */
 
 SELECT 
@@ -18,14 +19,14 @@ SELECT
     pi.purchase_price,
     (cf_year1.noi / pi.purchase_price) AS initial_cap_rate,
     
-    -- Lifecycle Performance Aggregates
-    AVG(perf.estimated_cash_on_cash_return) AS average_annual_coc,
+    -- Lifecycle Performance Aggregates (using available columns)
+    AVG(perf.atcf_operations / NULLIF(pi.purchase_price, 0)) AS average_annual_coc,
     
-    -- Hold Period Returns (specific year snapshots)
-    MAX(CASE WHEN perf.year = 5 THEN perf.estimated_cash_on_cash_return END) AS year_5_cumulative_coc,
-    MAX(CASE WHEN perf.year = 10 THEN perf.estimated_cash_on_cash_return END) AS year_10_cumulative_coc,
-    MAX(CASE WHEN perf.year = 15 THEN perf.estimated_cash_on_cash_return END) AS year_15_cumulative_coc,
-    MAX(CASE WHEN perf.year = 20 THEN perf.estimated_cash_on_cash_return END) AS year_20_cumulative_coc,
+    -- Hold Period Returns (specific year snapshots) - using cash flow after capex
+    MAX(CASE WHEN perf.year = 5 THEN (perf.atcf_operations / NULLIF(pi.purchase_price, 0)) END) AS year_5_cumulative_coc,
+    MAX(CASE WHEN perf.year = 10 THEN (perf.atcf_operations / NULLIF(pi.purchase_price, 0)) END) AS year_10_cumulative_coc,
+    MAX(CASE WHEN perf.year = 15 THEN (perf.atcf_operations / NULLIF(pi.purchase_price, 0)) END) AS year_15_cumulative_coc,
+    MAX(CASE WHEN perf.year = 20 THEN (perf.atcf_operations / NULLIF(pi.purchase_price, 0)) END) AS year_20_cumulative_coc,
     
     -- Multi-Scenario Cap Rates (NOI / Current Property Value)
     -- Year 5 Cap Rates
@@ -61,15 +62,15 @@ SELECT
          THEN ROUND((cf_noi.noi / NULLIF(appr.current_value, 0)), 4) END) AS year_20_cap_rate_aggressive,
     
     -- Total Return Metrics (using available columns from int_property_cash_flows)
-    MAX(perf.annual_cash_flow_after_capex) AS total_cash_returned,
-    MAX(perf.estimated_cash_on_cash_return) AS total_coc_multiple
+    SUM(perf.atcf_operations) AS total_cash_returned,
+    SUM(perf.atcf_operations) / NULLIF(pi.purchase_price, 0) AS total_coc_multiple
     
-FROM {{ source('hkh_dev', 'stg_property_inputs') }} pi
+FROM hkh_dev.stg_property_inputs pi
 
 -- Portfolio filtering: Only include properties in default portfolio for this company
-INNER JOIN {{ source('hkh_dev', 'stg_property_portfolio_assignments') }} ppa 
+INNER JOIN hkh_dev.stg_property_portfolio_assignments ppa 
     ON pi.property_id = ppa.property_id
-INNER JOIN {{ source('hkh_dev', 'stg_portfolio_settings') }} ps 
+INNER JOIN hkh_dev.stg_portfolio_settings ps 
     ON ppa.portfolio_id = ps.portfolio_id 
     AND ppa.company_id = ps.company_id
     
