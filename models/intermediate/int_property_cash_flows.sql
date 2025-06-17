@@ -61,12 +61,13 @@ WITH pgi_calc AS (
             pr.capex_per_unit,
             pr.ds_refi_year,
             -- Years 2+: Stable operations with protected tenants
+            -- 🏆 FIXED: Use reno_snap for turning units (the BIG money!)
             ROUND(
                 (pr.pgi * (
                     -- Most tenants stay with COLA-only increases (workforce housing protection)
                     (1 - pr.norm_turn_rate) * (1 + pr.cola_snap) +
-                    -- Small % natural turnover gets market adjustment
-                    pr.norm_turn_rate * (1 + pr.norm_snap)
+                    -- 🤑 GOLD: Turning units get RENO snap, not norm snap!
+                    pr.norm_turn_rate * (1 + pr.reno_snap)
                 ))::numeric, 2
             ) AS pgi
         FROM pgi_recursive pr
@@ -220,4 +221,4 @@ SELECT
     
 FROM cash_flow_calcs
 WHERE company_id = 1
-ORDER BY property_id, year
+ORDER BY property_id, year 
