@@ -360,4 +360,4 @@ SELECT
   END AS debug_active_tier
 
 FROM hurdle_distributions
-ORDER BY portfolio_id, year 
+ORDER BY portfolio_id, year

@@ -110,6 +110,18 @@ capex_reserves AS (
     FROM hkh_dev.int_capex_reserves
 ),
 
+-- Get professional fees from fee model
+professional_fees AS (
+    SELECT
+        property_id,
+        company_id,
+        portfolio_id,
+        year,
+        total_annual_professional_fees
+    FROM hkh_dev.int_fees_calculation_by_year
+    WHERE company_id = 1
+),
+
 -- Clean, step-by-step revenue calculations
 revenue_calcs AS (
     SELECT
@@ -143,17 +155,22 @@ collections_calcs AS (
     FROM revenue_calcs rc
 ),
 
--- Calculate operating expenses (BASE only, no management fees)
+-- Calculate operating expenses (sophisticated fees + base property plug)
 operating_calcs AS (
     SELECT
         cc.*,
+        COALESCE(pf.total_annual_professional_fees, 0) AS professional_fees,
         
-        -- Step 5: Calculate BASE operating expenses only
-        ROUND((cc.egi * COALESCE(cc.opex_ratio, 0.30))::numeric, 0) AS opex,
+        -- Base property OpEx plug (10.5% until separate OpEx model built)
+        ROUND((cc.egi * 0.105)::numeric, 0) AS base_property_opex,
         
-        -- Step 6: Calculate NOI (Net Operating Income)
-        ROUND((cc.egi - (cc.egi * COALESCE(cc.opex_ratio, 0.30)))::numeric, 0) AS noi
+        -- Total sophisticated OpEx (professional fees + base property costs)
+        ROUND((COALESCE(pf.total_annual_professional_fees, 0) + (cc.egi * 0.105))::numeric, 0) AS opex,
+        
+        -- NOI with sophisticated OpEx
+        ROUND((cc.egi - (COALESCE(pf.total_annual_professional_fees, 0) + (cc.egi * 0.105)))::numeric, 0) AS noi
     FROM collections_calcs cc
+    LEFT JOIN professional_fees pf ON cc.property_id = pf.property_id AND cc.company_id = pf.company_id AND cc.year = pf.year
 ),
 
 -- Calculate sophisticated cash flows WITH CapEx float income integration
@@ -178,7 +195,7 @@ cash_flow_calcs AS (
         ) AS atcf_operations,
         
         -- Annual cash flow metrics for business analysis
-        ROUND((oc.egi * (1 - COALESCE(oc.opex_ratio, 0.30)))::numeric, 0) AS annual_noi,
+        ROUND((oc.noi)::numeric, 0) AS annual_noi,
         ROUND((oc.noi - COALESCE(lp.debt_service, 0) - COALESCE(cr.capex, 0) + COALESCE(cr.capex_float_income, 0))::numeric, 0) AS annual_cash_flow_after_capex
         
     FROM operating_calcs oc
@@ -198,6 +215,10 @@ SELECT
     vacancy_loss,
     collections_loss,
     egi,
+    
+    -- Sophisticated OpEx breakdown
+    professional_fees,
+    base_property_opex,
     opex,
     noi,
     annual_noi,

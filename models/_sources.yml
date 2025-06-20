@@ -471,6 +471,103 @@ sources:
           warn_after: {count: 7, period: day}
           error_after: {count: 30, period: day}
 
+      # Professional fees growth factors for fee calculations
+      - name: stg_fees_growth_factors
+        description: "Fee growth factors and market review configuration for professional fees"
+        columns:
+          - name: company_id
+            description: "Company identifier for multi-tenancy"
+            tests:
+              - not_null
+          - name: portfolio_id
+            description: "Portfolio identifier"
+            tests:
+              - not_null
+          - name: fee_component
+            description: "Type of fee component (management, admin, etc.)"
+            tests:
+              - not_null
+          - name: annual_inflation_rate
+            description: "Annual inflation rate for fee adjustments"
+            tests:
+              - not_null
+          - name: base_pct_of_pgi
+            description: "Base percentage of PGI for fee calculation"
+            tests:
+              - not_null
+          - name: last_market_review_date
+            description: "Date of last market review"
+          - name: next_review_due_date
+            description: "Date when next market review is due"
+          - name: variance_from_market
+            description: "Variance from market benchmark"
+          - name: review_frequency_months
+            description: "How often to review fees (in months)"
+          - name: market_benchmark_source
+            description: "Source of market benchmark data"
+          - name: notes
+            description: "Additional notes about fee configuration"
+          - name: created_by
+            description: "User who created this record"
+          - name: created_at
+            description: "Timestamp when record was created"
+          - name: updated_at
+            description: "Timestamp when record was last updated"
+        freshness:
+          warn_after: {count: 7, period: day}
+          error_after: {count: 30, period: day}
+
+      # Professional fees base data for fee calculations
+      - name: stg_base_fees_components
+        description: "Base fee components and property data for professional fee calculations"
+        columns:
+          - name: property_id
+            description: "Unique property identifier"
+            tests:
+              - not_null
+              - unique
+          - name: company_id
+            description: "Company identifier for multi-tenancy"
+            tests:
+              - not_null
+          - name: portfolio_id
+            description: "Portfolio identifier"
+            tests:
+              - not_null
+          - name: property_name
+            description: "Property name"
+          - name: purchase_price
+            description: "Property acquisition price"
+          - name: unit_count
+            description: "Number of rental units"
+          - name: gross_annual_income
+            description: "Property gross annual income for fee calculations"
+            tests:
+              - not_null
+          - name: investment_strategy
+            description: "Investment strategy (value-add, etc.)"
+          - name: base_property_management_fee
+            description: "Base annual property management fee"
+          - name: base_asset_management_fee
+            description: "Base annual asset management fee"
+          - name: base_leasing_fee
+            description: "Base annual leasing fee"
+          - name: base_maintenance_coordination_fee
+            description: "Base annual maintenance coordination fee"
+          - name: acquisition_fee
+            description: "One-time acquisition fee"
+          - name: estimated_disposition_fee
+            description: "Estimated disposition fee"
+          - name: fee_category
+            description: "Fee category classification"
+          - name: created_by
+            description: "User who created this record"
+          - name: created_at
+            description: "Timestamp when record was created"
+        freshness:
+          warn_after: {count: 7, period: day}
+          error_after: {count: 30, period: day}
+
   # ──────────────────────────────────────────────────────────────────────────────
   #  Source:  costar_analysis.<table_name>
   #  (all tables here live in schema "costar_analysis" of database "hkh_decision_support_db")
@@ -522,4 +619,4 @@ sources:
         description: "Property rankings within analysis runs"
         
       - name: portfolio_summaries
-        description: "Portfolio-level summary analytics" 
+        description: "Portfolio-level summary analytics"
