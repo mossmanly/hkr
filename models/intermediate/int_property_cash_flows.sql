@@ -30,12 +30,12 @@ WITH pgi_calc AS (
             pi.ds_refi_year,
             -- Year 1 PGI: Initial stabilization with workforce housing protection
             ROUND(
-                (pi.unit_count * pi.avg_rent_per_unit * 12 * (
+                pi.unit_count * pi.avg_rent_per_unit * 12 * (
                     -- Majority retain with COLA protection (no displacement)
                     (1 - pi.init_turn_rate) * (1 + pi.cola_snap) +
                     -- Small % natural turnover: renovate + market snap with vacancy
                     pi.init_turn_rate * (1 + pi.reno_snap) * (10.0/12)
-                ))::numeric, 2
+                ), 0
             ) AS pgi
         FROM {{ source('hkh_dev', 'stg_property_inputs') }} pi
         WHERE pi.company_id = 1  -- Company scoping for future multi-tenancy
@@ -63,12 +63,12 @@ WITH pgi_calc AS (
             -- Years 2+: Stable operations with protected tenants
             -- 🏆 FIXED: Use reno_snap for turning units (the BIG money!)
             ROUND(
-                (pr.pgi * (
+                pr.pgi * (
                     -- Most tenants stay with COLA-only increases (workforce housing protection)
                     (1 - pr.norm_turn_rate) * (1 + pr.cola_snap) +
                     -- 🤑 GOLD: Turning units get RENO snap, not norm snap!
                     pr.norm_turn_rate * (1 + pr.reno_snap)
-                ))::numeric, 2
+                ), 0
             ) AS pgi
         FROM pgi_recursive pr
         WHERE pr.year < 20
@@ -118,7 +118,7 @@ professional_fees AS (
         portfolio_id,
         year,
         total_annual_professional_fees
-    FROM hkh_dev.int_fees_calculation_by_year
+    FROM {{ ref('int_fees_calculations_by_year') }}
     WHERE company_id = 1
 ),
 
@@ -135,10 +135,10 @@ revenue_calcs AS (
         pc.opex_ratio,
         
         -- Step 1: Calculate vacancy loss
-        ROUND((pc.pgi * COALESCE(pc.vacancy_rate, 0))::numeric, 0) AS vacancy_loss,
+        ROUND(pc.pgi * COALESCE(pc.vacancy_rate, 0), 0) AS vacancy_loss,
         
         -- Step 2: Calculate gross collectible rent (PGI - vacancy)
-        ROUND((pc.pgi - (pc.pgi * COALESCE(pc.vacancy_rate, 0)))::numeric, 0) AS gross_collectible_rent
+        ROUND(pc.pgi - (pc.pgi * COALESCE(pc.vacancy_rate, 0)), 0) AS gross_collectible_rent
     FROM pgi_calc pc
 ),
 
@@ -148,10 +148,10 @@ collections_calcs AS (
         rc.*,
         
         -- Step 3: Calculate collections loss on collectible rent
-        ROUND((rc.gross_collectible_rent * COALESCE(rc.collections_loss_rate, 0))::numeric, 0) AS collections_loss,
+        ROUND(rc.gross_collectible_rent * COALESCE(rc.collections_loss_rate, 0), 0) AS collections_loss,
         
         -- Step 4: Calculate EGI (Effective Gross Income)
-        ROUND((rc.gross_collectible_rent - (rc.gross_collectible_rent * COALESCE(rc.collections_loss_rate, 0)))::numeric, 0) AS egi
+        ROUND(rc.gross_collectible_rent - (rc.gross_collectible_rent * COALESCE(rc.collections_loss_rate, 0)), 0) AS egi
     FROM revenue_calcs rc
 ),
 
@@ -159,16 +159,16 @@ collections_calcs AS (
 operating_calcs AS (
     SELECT
         cc.*,
-        COALESCE(pf.total_annual_professional_fees, 0) AS professional_fees,
+        ROUND(COALESCE(pf.total_annual_professional_fees, 0), 0) AS professional_fees,
         
         -- Base property OpEx plug (10.5% until separate OpEx model built)
-        ROUND((cc.egi * 0.105)::numeric, 0) AS base_property_opex,
+        ROUND(cc.egi * 0.105, 0) AS base_property_opex,
         
         -- Total sophisticated OpEx (professional fees + base property costs)
-        ROUND((COALESCE(pf.total_annual_professional_fees, 0) + (cc.egi * 0.105))::numeric, 0) AS opex,
+        ROUND(COALESCE(pf.total_annual_professional_fees, 0) + (cc.egi * 0.105), 0) AS opex,
         
         -- NOI with sophisticated OpEx
-        ROUND((cc.egi - (COALESCE(pf.total_annual_professional_fees, 0) + (cc.egi * 0.105)))::numeric, 0) AS noi
+        ROUND(cc.egi - (COALESCE(pf.total_annual_professional_fees, 0) + (cc.egi * 0.105)), 0) AS noi
     FROM collections_calcs cc
     LEFT JOIN professional_fees pf ON cc.property_id = pf.property_id AND cc.company_id = pf.company_id AND cc.year = pf.year
 ),
@@ -184,19 +184,17 @@ cash_flow_calcs AS (
         COALESCE(lp.refi_proceeds, 0) as refi_proceeds,
         
         -- Step 7: Calculate BTCF (Before-Tax Cash Flow)
-        ROUND((oc.noi - COALESCE(lp.debt_service, 0))::numeric, 0) AS btcf,
+        ROUND(oc.noi - COALESCE(lp.debt_service, 0), 0) AS btcf,
         
         -- Step 8: BTCF minus CapEx spending (before float income)
-        ROUND((oc.noi - COALESCE(lp.debt_service, 0) - COALESCE(cr.capex, 0))::numeric, 0) AS btcf_after_capex,
+        ROUND(oc.noi - COALESCE(lp.debt_service, 0) - COALESCE(cr.capex, 0), 0) AS btcf_after_capex,
         
         -- Step 9: Final ATCF Operations (after adding float income) - THE CRITICAL INTEGRATION
-        ROUND(
-            (oc.noi - COALESCE(lp.debt_service, 0) - COALESCE(cr.capex, 0) + COALESCE(cr.capex_float_income, 0))::numeric, 0
-        ) AS atcf_operations,
+        ROUND(oc.noi - COALESCE(lp.debt_service, 0) - COALESCE(cr.capex, 0) + COALESCE(cr.capex_float_income, 0), 0) AS atcf_operations,
         
         -- Annual cash flow metrics for business analysis
-        ROUND((oc.noi)::numeric, 0) AS annual_noi,
-        ROUND((oc.noi - COALESCE(lp.debt_service, 0) - COALESCE(cr.capex, 0) + COALESCE(cr.capex_float_income, 0))::numeric, 0) AS annual_cash_flow_after_capex
+        ROUND(oc.noi, 0) AS annual_noi,
+        ROUND(oc.noi - COALESCE(lp.debt_service, 0) - COALESCE(cr.capex, 0) + COALESCE(cr.capex_float_income, 0), 0) AS annual_cash_flow_after_capex
         
     FROM operating_calcs oc
     LEFT JOIN loan_payments lp ON lp.property_id = oc.property_id AND lp.year = oc.year
