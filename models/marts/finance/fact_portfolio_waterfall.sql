@@ -1,3 +1,4 @@
+--models/marts/finance/fact_portfolio_waterfall.sql
 {{ config(materialized='view') }}
 
 WITH 
@@ -140,13 +141,13 @@ final_waterfall AS (
       GREATEST(0, acf.total_pref_equity - COALESCE(acf.prev_cumulative_cash_flow, 0))
     )) AS pref_roc_paid,
     
-    -- Step 2: Preferred IRR (from remaining cash after pref ROC)
+    -- Step 2: Preferred IRR (from remaining cash after pref ROC) - FIXED: No IRR in year 1
     GREATEST(0, LEAST(
       acf.total_cash_flow - GREATEST(0, LEAST(
         acf.total_cash_flow,
         GREATEST(0, acf.total_pref_equity - COALESCE(acf.prev_cumulative_cash_flow, 0))
       )),
-      GREATEST(0, acf.total_pref_equity * acf.weighted_avg_base_irr * acf.year - 
+      GREATEST(0, acf.total_pref_equity * acf.weighted_avg_base_irr * GREATEST(0, acf.year - 1) - 
         GREATEST(0, COALESCE(acf.prev_cumulative_cash_flow, 0) - acf.total_pref_equity))
     )) AS pref_irr_paid,
     
@@ -156,33 +157,33 @@ final_waterfall AS (
       GREATEST(0, LEAST(acf.total_cash_flow, GREATEST(0, acf.total_pref_equity - COALESCE(acf.prev_cumulative_cash_flow, 0)))) -
       GREATEST(0, LEAST(
         acf.total_cash_flow - GREATEST(0, LEAST(acf.total_cash_flow, GREATEST(0, acf.total_pref_equity - COALESCE(acf.prev_cumulative_cash_flow, 0)))),
-        GREATEST(0, acf.total_pref_equity * acf.weighted_avg_base_irr * acf.year - GREATEST(0, COALESCE(acf.prev_cumulative_cash_flow, 0) - acf.total_pref_equity))
+        GREATEST(0, acf.total_pref_equity * acf.weighted_avg_base_irr * GREATEST(0, acf.year - 1) - GREATEST(0, COALESCE(acf.prev_cumulative_cash_flow, 0) - acf.total_pref_equity))
       )),
       GREATEST(0, acf.total_common_equity - 
-        GREATEST(0, COALESCE(acf.prev_cumulative_cash_flow, 0) - acf.total_pref_equity - acf.total_pref_equity * acf.weighted_avg_base_irr * acf.year))
+        GREATEST(0, COALESCE(acf.prev_cumulative_cash_flow, 0) - acf.total_pref_equity - acf.total_pref_equity * acf.weighted_avg_base_irr * GREATEST(0, acf.year - 1)))
     )) AS common_roc_paid,
     
-    -- Step 4: Common IRR (from remaining cash after common ROC)
+    -- Step 4: Common IRR (from remaining cash after common ROC) - FIXED: No IRR in year 1
     GREATEST(0, LEAST(
       acf.total_cash_flow - 
       -- Subtract all previous distributions
       GREATEST(0, LEAST(acf.total_cash_flow, GREATEST(0, acf.total_pref_equity - COALESCE(acf.prev_cumulative_cash_flow, 0)))) -
       GREATEST(0, LEAST(
         acf.total_cash_flow - GREATEST(0, LEAST(acf.total_cash_flow, GREATEST(0, acf.total_pref_equity - COALESCE(acf.prev_cumulative_cash_flow, 0)))),
-        GREATEST(0, acf.total_pref_equity * acf.weighted_avg_base_irr * acf.year - GREATEST(0, COALESCE(acf.prev_cumulative_cash_flow, 0) - acf.total_pref_equity))
+        GREATEST(0, acf.total_pref_equity * acf.weighted_avg_base_irr * GREATEST(0, acf.year - 1) - GREATEST(0, COALESCE(acf.prev_cumulative_cash_flow, 0) - acf.total_pref_equity))
       )) -
       GREATEST(0, LEAST(
         acf.total_cash_flow - 
         GREATEST(0, LEAST(acf.total_cash_flow, GREATEST(0, acf.total_pref_equity - COALESCE(acf.prev_cumulative_cash_flow, 0)))) -
         GREATEST(0, LEAST(
           acf.total_cash_flow - GREATEST(0, LEAST(acf.total_cash_flow, GREATEST(0, acf.total_pref_equity - COALESCE(acf.prev_cumulative_cash_flow, 0)))),
-          GREATEST(0, acf.total_pref_equity * acf.weighted_avg_base_irr * acf.year - GREATEST(0, COALESCE(acf.prev_cumulative_cash_flow, 0) - acf.total_pref_equity))
+          GREATEST(0, acf.total_pref_equity * acf.weighted_avg_base_irr * GREATEST(0, acf.year - 1) - GREATEST(0, COALESCE(acf.prev_cumulative_cash_flow, 0) - acf.total_pref_equity))
         )),
         GREATEST(0, acf.total_common_equity - 
-          GREATEST(0, COALESCE(acf.prev_cumulative_cash_flow, 0) - acf.total_pref_equity - acf.total_pref_equity * acf.weighted_avg_base_irr * acf.year))
+          GREATEST(0, COALESCE(acf.prev_cumulative_cash_flow, 0) - acf.total_pref_equity - acf.total_pref_equity * acf.weighted_avg_base_irr * GREATEST(0, acf.year - 1)))
       )),
-      GREATEST(0, acf.total_common_equity * acf.weighted_avg_base_irr * acf.year - 
-        GREATEST(0, COALESCE(acf.prev_cumulative_cash_flow, 0) - acf.total_pref_equity - acf.total_pref_equity * acf.weighted_avg_base_irr * acf.year - acf.total_common_equity))
+      GREATEST(0, acf.total_common_equity * acf.weighted_avg_base_irr * GREATEST(0, acf.year - 1) - 
+        GREATEST(0, COALESCE(acf.prev_cumulative_cash_flow, 0) - acf.total_pref_equity - acf.total_pref_equity * acf.weighted_avg_base_irr * GREATEST(0, acf.year - 1) - acf.total_common_equity))
     )) AS common_irr_paid
     
   FROM annual_cash_flows acf
@@ -278,24 +279,27 @@ hurdle_distributions AS (
       scc.remaining_for_hurdles * COALESCE(scc.hurdle3_sponsor_share, 0.50)
     ELSE 0 END AS hurdle3_sponsor,
     
-    -- Residual (hurdle3_threshold to weighted_avg_target_irr)
+    -- FIXED: Residual investor (hurdle3_threshold and above, but STOPS at target IRR)
     CASE WHEN scc.total_equity > 0 AND scc.year > 1 AND
          scc.current_irr >= scc.hurdle3_threshold AND
          scc.current_irr < scc.weighted_avg_target_irr THEN
       scc.remaining_for_hurdles * COALESCE(scc.residual_investor_share, 0.35)
     ELSE 0 END AS residual_investor,
     
+    -- FIXED: Residual sponsor (hurdle3_threshold and above, gets ALL cash when target IRR met)
     CASE WHEN scc.total_equity > 0 AND scc.year > 1 AND
-         scc.current_irr >= scc.hurdle3_threshold AND
-         scc.current_irr < scc.weighted_avg_target_irr THEN
-      scc.remaining_for_hurdles * COALESCE(scc.residual_sponsor_share, 0.65)
+         scc.current_irr >= scc.hurdle3_threshold THEN
+      -- If target IRR met, sponsor gets ALL remaining cash
+      CASE WHEN scc.current_irr >= scc.weighted_avg_target_irr THEN
+        scc.remaining_for_hurdles
+      -- Otherwise use normal residual split
+      ELSE
+        scc.remaining_for_hurdles * COALESCE(scc.residual_sponsor_share, 0.65)
+      END
     ELSE 0 END AS residual_sponsor,
     
-    -- Target IRR met: ALL remaining cash to sponsor
-    CASE WHEN scc.total_equity > 0 AND scc.year > 1 AND
-         scc.current_irr >= scc.weighted_avg_target_irr THEN
-      scc.remaining_for_hurdles
-    ELSE 0 END AS target_irr_sponsor
+    -- FIXED: Remove target_irr_sponsor - now consolidated into residual_sponsor
+    0 AS target_irr_sponsor
     
   FROM sponsor_catchup_calc scc
 )
