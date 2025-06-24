@@ -8,85 +8,10 @@
 -- Preserves all original business logic: PGI growth, workforce housing protection, CapEx float income
 -- References only staging and intermediate models for clean data lineage
 
-WITH pgi_calc AS (
-    WITH RECURSIVE pgi_recursive AS (
-        -- Base case: Year 1 for each property
-        SELECT 
-            pi.property_id,
-            pi.company_id,
-            pi.portfolio_id,
-            1 as year,
-            pi.unit_count,
-            pi.avg_rent_per_unit,
-            pi.init_turn_rate,
-            pi.norm_turn_rate,
-            pi.cola_snap,
-            pi.norm_snap,
-            pi.reno_snap,
-            pi.vacancy_rate,
-            pi.collections_loss_rate,
-            pi.opex_ratio,
-            pi.capex_per_unit,
-            pi.ds_refi_year,
-            -- Year 1 PGI: Initial stabilization with workforce housing protection
-            ROUND(
-                pi.unit_count * pi.avg_rent_per_unit * 12 * (
-                    -- Majority retain with COLA protection (no displacement)
-                    (1 - pi.init_turn_rate) * (1 + pi.cola_snap) +
-                    -- Small % natural turnover: renovate + market snap with vacancy
-                    pi.init_turn_rate * (1 + pi.reno_snap) * (10.0/12)
-                ), 0
-            ) AS pgi
-        FROM {{ source('hkh_dev', 'stg_property_inputs') }} pi
-        WHERE pi.company_id = 1  -- Company scoping for future multi-tenancy
-        
-        UNION ALL
-        
-        -- Recursive case: Years 2-20 based on previous year
-        SELECT 
-            pr.property_id,
-            pr.company_id,
-            pr.portfolio_id,
-            pr.year + 1,
-            pr.unit_count,
-            pr.avg_rent_per_unit,
-            pr.init_turn_rate,
-            pr.norm_turn_rate,
-            pr.cola_snap,
-            pr.norm_snap,
-            pr.reno_snap,
-            pr.vacancy_rate,
-            pr.collections_loss_rate,
-            pr.opex_ratio,
-            pr.capex_per_unit,
-            pr.ds_refi_year,
-            -- Years 2+: Stable operations with protected tenants
-            -- 🏆 FIXED: Use reno_snap for turning units (the BIG money!)
-            ROUND(
-                pr.pgi * (
-                    -- Most tenants stay with COLA-only increases (workforce housing protection)
-                    (1 - pr.norm_turn_rate) * (1 + pr.cola_snap) +
-                    -- 🤑 GOLD: Turning units get RENO snap, not norm snap!
-                    pr.norm_turn_rate * (1 + pr.reno_snap)
-                ), 0
-            ) AS pgi
-        FROM pgi_recursive pr
-        WHERE pr.year < 20
-    )
-    
-    SELECT 
-        property_id,
-        company_id,
-        portfolio_id,
-        year,
-        pgi,
-        vacancy_rate,
-        collections_loss_rate,
-        opex_ratio,
-        unit_count,
-        capex_per_unit,
-        ds_refi_year
-    FROM pgi_recursive
+WITH 
+-- Reference extracted PGI model
+pgi_data AS (
+    SELECT * FROM {{ ref('int_pgi_calculations') }}
 ),
 
 -- Get loan payments from intermediate model
@@ -110,16 +35,14 @@ capex_reserves AS (
     FROM hkh_dev.int_capex_reserves
 ),
 
--- Get professional fees from fee model
+-- Get professional fees from NEW fees mart (replaces old multi-model approach)
 professional_fees AS (
     SELECT
         property_id,
-        company_id,
-        portfolio_id,
         year,
-        total_annual_professional_fees
-    FROM {{ ref('int_fees_calculations_by_year') }}
-    WHERE company_id = 1
+        SUM(fee_amount) as total_annual_professional_fees
+    FROM {{ ref('fact_opex_fees_calculations') }}
+    GROUP BY property_id, year
 ),
 
 -- Clean, step-by-step revenue calculations
@@ -139,7 +62,7 @@ revenue_calcs AS (
         
         -- Step 2: Calculate gross collectible rent (PGI - vacancy)
         ROUND(pc.pgi - (pc.pgi * COALESCE(pc.vacancy_rate, 0)), 0) AS gross_collectible_rent
-    FROM pgi_calc pc
+    FROM pgi_data pc
 ),
 
 -- Calculate collections and EGI based on clean intermediate values
@@ -170,7 +93,7 @@ operating_calcs AS (
         -- NOI with sophisticated OpEx
         ROUND(cc.egi - (COALESCE(pf.total_annual_professional_fees, 0) + (cc.egi * 0.105)), 0) AS noi
     FROM collections_calcs cc
-    LEFT JOIN professional_fees pf ON cc.property_id = pf.property_id AND cc.company_id = pf.company_id AND cc.year = pf.year
+    LEFT JOIN professional_fees pf ON cc.property_id = pf.property_id AND cc.year = pf.year
 ),
 
 -- Calculate sophisticated cash flows WITH CapEx float income integration
@@ -240,4 +163,4 @@ SELECT
     
 FROM cash_flow_calcs
 WHERE company_id = 1
-ORDER BY property_id, year 
+ORDER BY property_id, year
