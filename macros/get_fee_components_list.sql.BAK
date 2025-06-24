@@ -1,0 +1,28 @@
+{% macro get_fee_components() %}
+  {% set query %}
+    select distinct fee_component 
+    from {{ ref('stg_fees_configuration') }} 
+    order by fee_component
+  {% endset %}
+  
+  {% if execute %}
+    {% set results = run_query(query) %}
+    {% set components = results.columns[0].values() %}
+  {% else %}
+    {% set components = ['property_mgmt', 'asset_mgmt', 'leasing', 'maintenance'] %}
+  {% endif %}
+  
+  {% do return(components) %}
+{% endmacro %}
+
+{% macro standardize_component_name(component) %}
+  {% if component == 'property_mgmt' %}
+    {% do return('property_management') %}
+  {% elif component == 'asset_mgmt' %}
+    {% do return('asset_management') %}
+  {% elif component == 'maintenance' %}
+    {% do return('maintenance_coordination') %}
+  {% else %}
+    {% do return(component) %}
+  {% endif %}
+{% endmacro %}

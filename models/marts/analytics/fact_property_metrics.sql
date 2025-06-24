@@ -21,7 +21,7 @@ WITH portfolio_properties AS (
         ROUND(SUM(pcf.atcf_operations), 0) AS total_cf_after_capex,
         ROUND(SUM(pcf.capex_float_income), 0) AS total_capex_float_income
 
-    FROM hkh_dev.int_property_cash_flows pcf
+    FROM {{ ref('int_property_cash_flows') }} pcf
     WHERE pcf.company_id = 1
       AND pcf.year = 1  -- First year only for summary
     GROUP BY pcf.company_id, pcf.portfolio_id
@@ -68,18 +68,24 @@ portfolio_fees AS (
         fc.company_id,
         fc.portfolio_id,
         
-        -- Fee totals using ACTUAL column names
-        ROUND(SUM(fc.acquisition_fee), 0) AS total_acquisition_fees,
-        ROUND(SUM(fc.annual_management_fee), 0) AS total_mgmt_fees,
-        ROUND(SUM(fc.estimated_disposition_fee), 0) AS total_disposition_fees,
-        ROUND(SUM(fc.total_annual_fees), 0) AS total_annual_fees,
+        -- Fee totals aggregated by category from actual fee structure
+        ROUND(SUM(CASE WHEN fc.category = 'property_mgmt' THEN fc.fee_amount ELSE 0 END), 0) AS total_mgmt_fees,
+        ROUND(SUM(CASE WHEN fc.category = 'asset_mgmt' THEN fc.fee_amount ELSE 0 END), 0) AS total_asset_mgmt_fees,
+        ROUND(SUM(CASE WHEN fc.category = 'leasing' THEN fc.fee_amount ELSE 0 END), 0) AS total_leasing_fees,
+        ROUND(SUM(CASE WHEN fc.category = 'maintenance' THEN fc.fee_amount ELSE 0 END), 0) AS total_maintenance_fees,
+        ROUND(SUM(fc.fee_amount), 0) AS total_annual_fees,
         
-        -- Fee analysis using ACTUAL column names
-        ROUND(AVG(fc.management_fee_rate), 2) AS avg_mgmt_fee_rate,
-        ROUND(AVG(fc.management_fee_per_unit), 0) AS avg_mgmt_fee_per_unit
+        -- Set acquisition and disposition fees to 0 (not in current model)
+        0 AS total_acquisition_fees,
+        0 AS total_disposition_fees,
+        
+        -- Fee analysis - calculate averages
+        ROUND(AVG(CASE WHEN fc.category = 'property_mgmt' THEN fc.base_pct_of_pgi ELSE NULL END), 2) AS avg_mgmt_fee_rate,
+        ROUND(AVG(CASE WHEN fc.category = 'property_mgmt' THEN fc.fee_amount / fc.unit_count ELSE NULL END), 0) AS avg_mgmt_fee_per_unit
 
-    FROM hkh_dev.int_fee_calculations fc
+    FROM {{ ref('fact_opex_fees_calculations') }} fc
     WHERE fc.company_id = 1
+      AND fc.year = 1  -- First year only for summary
     GROUP BY fc.company_id, fc.portfolio_id
 ),
 

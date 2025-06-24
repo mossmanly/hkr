@@ -24,7 +24,7 @@ WITH portfolio_properties AS (
         ROUND(SUM(pcf.capex), 0) AS total_capex_spending,
         ROUND(SUM(pcf.capex_float_income), 0) AS total_capex_float_income
 
-    FROM hkh_dev.int_property_cash_flows pcf
+    FROM {{ ref('int_property_cash_flows') }} pcf
     WHERE pcf.company_id = 1
       AND pcf.year = 1  -- First year only for summary
     GROUP BY pcf.company_id, pcf.portfolio_id
@@ -60,7 +60,7 @@ portfolio_financing AS (
         ROUND(SUM(ls.interest_payment), 0) AS total_first_year_interest,
         ROUND(SUM(ls.principal_payment), 0) AS total_first_year_principal
 
-    FROM hkh_dev.int_loan_schedules ls
+    FROM {{ ref('int_loan_schedules') }} ls
     WHERE ls.company_id = 1
         AND ls.year = 1  -- Only first year for annual summary
     GROUP BY ls.company_id, ls.portfolio_id
@@ -68,22 +68,24 @@ portfolio_financing AS (
 
 portfolio_fees AS (
     SELECT 
-        fc.company_id,
-        fc.portfolio_id,
+        p.company_id,
+        p.portfolio_id,
         
-        -- Fee totals (using ACTUAL column names) - ROUND DOLLAR AMOUNTS
-        ROUND(SUM(fc.acquisition_fee), 0) AS total_acquisition_fees,
-        ROUND(SUM(fc.annual_management_fee), 0) AS total_mgmt_fees,
-        ROUND(SUM(fc.estimated_disposition_fee), 0) AS total_disposition_fees,
-        ROUND(SUM(fc.total_annual_fees), 0) AS total_annual_fees,
+        -- Fee totals from new detailed mart - ROUND DOLLAR AMOUNTS  
+        0 AS total_acquisition_fees,  -- Not in new operational fee model
+        ROUND(SUM(CASE WHEN fc.category IN ('asset_mgmt', 'property_mgmt') THEN fc.fee_amount ELSE 0 END), 0) AS total_mgmt_fees,
+        0 AS total_disposition_fees,  -- Not in new operational fee model
+        ROUND(SUM(fc.fee_amount), 0) AS total_annual_fees,
         
-        -- Fee analysis - KEEP RATIO PRECISION AND ROUND DOLLAR AMOUNTS
-        ROUND(AVG(fc.management_fee_rate), 2) AS avg_mgmt_fee_rate,
-        ROUND(AVG(fc.management_fee_per_unit), 0) AS avg_mgmt_fee_per_unit
+        -- Fee analysis - calculated from detailed data
+        ROUND(AVG(fc.fee_pct_of_pgi), 2) AS avg_mgmt_fee_rate,
+        ROUND(SUM(fc.fee_amount) / SUM(p.unit_count), 0) AS avg_mgmt_fee_per_unit
 
-    FROM hkh_dev.int_fee_calculations fc
-    WHERE fc.company_id = 1
-    GROUP BY fc.company_id, fc.portfolio_id
+    FROM {{ ref('fact_opex_fees_calculations') }} fc
+    JOIN hkh_dev.stg_property_inputs p ON fc.property_id = p.property_id
+    WHERE fc.year = 1  -- First year only for summary
+      AND p.company_id = 1
+    GROUP BY p.company_id, p.portfolio_id
 ),
 
 portfolio_settings AS (
@@ -268,4 +270,4 @@ SELECT
 FROM portfolio_analysis pa
 WHERE pa.company_id = 1  -- Portfolio architecture filtering
 
-ORDER BY pa.portfolio_id
+ORDER BY pa.portfolio_id 

@@ -1,6 +1,6 @@
 -- marts/finance/fact_property_performance.sql
 -- Property performance tracking with year-over-year analysis
--- FIXED: Uses actual column names from complete schema analysis
+-- UPDATED: Uses new fee mart instead of old int_fee_calculations
 
 {{ config(materialized='table') }}
 
@@ -35,15 +35,15 @@ WITH property_cash_flows AS (
 
 property_basics AS (
     SELECT 
-        fc.property_id,
-        fc.company_id,
-        fc.portfolio_id,
-        fc.property_name,
-        ROUND(fc.purchase_price, 0) AS purchase_price,
-        fc.unit_count,
-        ROUND(fc.gross_annual_income, 0) AS gross_annual_income,
-        fc.portfolio_name,
-        fc.investment_strategy,
+        spi.property_id,
+        spi.company_id,
+        spi.portfolio_id,
+        spi.property_name,
+        ROUND(spi.purchase_price, 0) AS purchase_price,
+        spi.unit_count,
+        ROUND(spi.avg_rent_per_unit * spi.unit_count * 12, 0) AS gross_annual_income,
+        ps.portfolio_name,
+        ps.investment_strategy,
         
         -- Property identification from staging
         spi.property_address,
@@ -53,29 +53,36 @@ property_basics AS (
         spi.acquisition_year,
         ROUND(spi.avg_rent_per_unit, 0) AS avg_rent_per_unit
 
-    FROM {{ ref('int_fee_calculations') }} fc
-    LEFT JOIN hkh_dev.stg_property_inputs spi
-        ON fc.property_id = spi.property_id
-        AND fc.company_id = spi.company_id
-    WHERE fc.company_id = 1
+    FROM hkh_dev.stg_property_inputs spi
+    LEFT JOIN hkh_dev.stg_portfolio_settings ps
+        ON spi.company_id = ps.company_id
+        AND spi.portfolio_id = ps.portfolio_id
+    WHERE spi.company_id = 1
 ),
 
 fee_data AS (
     SELECT 
         fc.property_id,
-        fc.company_id,
-        fc.portfolio_id,
-        ROUND(fc.acquisition_fee, 0) AS acquisition_fee,
-        ROUND(fc.annual_management_fee, 0) AS annual_management_fee,
-        ROUND(fc.monthly_management_fee, 0) AS monthly_management_fee,
-        ROUND(fc.estimated_disposition_fee, 0) AS estimated_disposition_fee,
-        ROUND(fc.total_annual_fees, 0) AS total_annual_fees,
-        fc.management_fee_rate,
-        ROUND(fc.management_fee_per_unit, 0) AS management_fee_per_unit,
-        fc.fee_category
+        p.company_id,
+        p.portfolio_id,
+        
+        -- Fee totals from new detailed mart
+        0 AS acquisition_fee,  -- Not in operational fee model
+        ROUND(SUM(CASE WHEN fc.category IN ('asset_mgmt', 'property_mgmt') THEN fc.fee_amount ELSE 0 END), 0) AS annual_management_fee,
+        ROUND(SUM(CASE WHEN fc.category IN ('asset_mgmt', 'property_mgmt') THEN fc.fee_amount ELSE 0 END) / 12, 0) AS monthly_management_fee,
+        0 AS estimated_disposition_fee,  -- Not in operational fee model
+        ROUND(SUM(fc.fee_amount), 0) AS total_annual_fees,
+        
+        -- Fee analysis - calculated from detailed data
+        ROUND(AVG(fc.fee_pct_of_pgi), 2) AS management_fee_rate,
+        ROUND(SUM(fc.fee_amount) / p.unit_count, 0) AS management_fee_per_unit,
+        'Standard' AS fee_category  -- Default since not in new model
 
-    FROM {{ ref('int_fee_calculations') }} fc
-    WHERE fc.company_id = 1
+    FROM {{ ref('fact_opex_fees_calculations') }} fc
+    JOIN hkh_dev.stg_property_inputs p ON fc.property_id = p.property_id
+    WHERE fc.year = 1  -- First year for fee structure
+      AND p.company_id = 1
+    GROUP BY fc.property_id, p.company_id, p.portfolio_id, p.unit_count
 )
 
 SELECT
