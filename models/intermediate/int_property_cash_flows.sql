@@ -45,6 +45,16 @@ professional_fees AS (
     GROUP BY property_id, year
 ),
 
+-- NEW: Get sophisticated property expenses from detailed fact mart
+property_expenses AS (
+    SELECT
+        property_id,
+        year,
+        SUM(expense_amount) as total_property_expenses
+    FROM {{ ref('fact_opex_expenses_calculations') }}
+    GROUP BY property_id, year
+),
+
 -- Clean, step-by-step revenue calculations
 revenue_calcs AS (
     SELECT
@@ -78,22 +88,23 @@ collections_calcs AS (
     FROM revenue_calcs rc
 ),
 
--- Calculate operating expenses (sophisticated fees + base property plug)
+-- Calculate operating expenses (sophisticated fees + sophisticated property expenses)
 operating_calcs AS (
     SELECT
         cc.*,
         ROUND(COALESCE(pf.total_annual_professional_fees, 0), 0) AS professional_fees,
         
-        -- Base property OpEx plug (10.5% until separate OpEx model built)
-        ROUND(cc.egi * 0.105, 0) AS base_property_opex,
+        -- NEW: Sophisticated base property OpEx (replaces 10.5% plug)
+        ROUND(COALESCE(pe.total_property_expenses, 0), 0) AS base_property_opex,
         
-        -- Total sophisticated OpEx (professional fees + base property costs)
-        ROUND(COALESCE(pf.total_annual_professional_fees, 0) + (cc.egi * 0.105), 0) AS opex,
+        -- Total sophisticated OpEx (professional fees + sophisticated property expenses)
+        ROUND(COALESCE(pf.total_annual_professional_fees, 0) + COALESCE(pe.total_property_expenses, 0), 0) AS opex,
         
         -- NOI with sophisticated OpEx
-        ROUND(cc.egi - (COALESCE(pf.total_annual_professional_fees, 0) + (cc.egi * 0.105)), 0) AS noi
+        ROUND(cc.egi - (COALESCE(pf.total_annual_professional_fees, 0) + COALESCE(pe.total_property_expenses, 0)), 0) AS noi
     FROM collections_calcs cc
     LEFT JOIN professional_fees pf ON cc.property_id = pf.property_id AND cc.year = pf.year
+    LEFT JOIN property_expenses pe ON cc.property_id = pe.property_id AND cc.year = pe.year
 ),
 
 -- Calculate sophisticated cash flows WITH CapEx float income integration
@@ -163,4 +174,4 @@ SELECT
     
 FROM cash_flow_calcs
 WHERE company_id = 1
-ORDER BY property_id, year
+ORDER BY property_id, year 
