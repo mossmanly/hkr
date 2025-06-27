@@ -1,10 +1,6 @@
--- property_investor_performance.sql (dbt model)
--- Time Series Performance for trending, filtering, and multi-year analysis
--- Updates automatically when underlying data changes
--- UPDATED: Portfolio filtering with company scoping
-
 {{ config(materialized='view') }}
 
+-- FIXED: Handle multiple assignment records per property by taking the latest operational status
 SELECT 
     cf.property_id,
     cf.year,
@@ -35,14 +31,22 @@ FROM {{ ref('int_property_cash_flows') }} cf
 JOIN {{ source('hkh_dev', 'stg_property_inputs') }} pi
     ON cf.property_id = pi.property_id
 
--- Portfolio filtering: Only include properties in default portfolio for this company
-INNER JOIN {{ source('hkh_dev', 'stg_property_portfolio_assignments') }} ppa 
-    ON pi.property_id = ppa.property_id
-INNER JOIN {{ source('hkh_dev', 'stg_portfolio_settings') }} ps 
-    ON ppa.portfolio_id = ps.portfolio_id 
-    AND ppa.company_id = ps.company_id
+-- FIXED: Use the latest assignment record per property to avoid duplicates
+WHERE cf.property_id IN (
+    SELECT DISTINCT ppa.property_id 
+    FROM {{ source('hkh_dev', 'stg_property_portfolio_assignments') }} ppa
+    JOIN {{ source('hkh_dev', 'stg_portfolio_settings') }} ps 
+        ON ppa.portfolio_id = ps.portfolio_id 
+        AND ppa.company_id = ps.company_id
+    WHERE ps.company_id = 1 
+      AND ps.is_default = TRUE
+      AND ppa.assignment_id = (
+          -- Get the latest assignment for this property
+          SELECT MAX(ppa2.assignment_id)
+          FROM {{ source('hkh_dev', 'stg_property_portfolio_assignments') }} ppa2
+          WHERE ppa2.property_id = ppa.property_id
+            AND ppa2.company_id = 1
+      )
+)
 
-WHERE ps.company_id = 1  -- Company scoping for future multi-tenancy
-  AND ps.is_default = TRUE  -- Only include default portfolio properties
-
-ORDER BY cf.property_id, cf.year 
+ORDER BY cf.property_id, cf.year

@@ -1,10 +1,6 @@
 {{
   config(
-    materialized='table',
-    indexes=[
-      {'columns': ['property_id'], 'unique': false},
-      {'columns': ['year'], 'unique': false}
-    ]
+    materialized='view'
   )
 }}
 
@@ -222,4 +218,4 @@ SELECT
   'int_capex_reserves' AS model_source
   
 FROM final_capex_management
-ORDER BY property_id, year
+ORDER BY property_id, year 
