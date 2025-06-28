@@ -1,0 +1,105 @@
+version: 2
+
+models:
+  # Intermediate models only - no staging references
+  - name: int_property_cash_flows
+    description: "Comprehensive property cash flow projections with multi-year analysis"
+    columns:
+      - name: property_id
+        description: "Property identifier"
+        tests:
+          - not_null
+      - name: cash_flow_year
+        description: "Year of cash flow projection (0 = acquisition, 1-10 = operations)"
+      - name: total_cash_flow
+        description: "Total cash flow for the year including operations and exit proceeds"
+      - name: cash_on_cash_return
+        description: "Annual cash-on-cash return percentage"
+      - name: annual_cap_rate
+        description: "Capitalization rate for the year"
+
+  - name: int_fee_calculations
+    description: "Comprehensive fee calculations for properties and portfolios"
+    columns:
+      - name: property_id
+        description: "Property identifier"
+        tests:
+          - not_null
+      - name: total_annual_fees
+        description: "Total annual fees for the property"
+      - name: management_fee_per_unit
+        description: "Management fee calculated per unit"
+
+  - name: int_loan_schedules
+    description: "Detailed loan amortization schedules"
+    columns:
+      - name: property_id
+        description: "Property identifier"
+        tests:
+          - not_null
+      - name: payment_number
+        description: "Payment sequence number"
+      - name: beginning_balance
+        description: "Loan balance at beginning of period"
+      - name: ending_balance
+        description: "Loan balance at end of period"
+
+  - name: int_property_valuations
+    description: "Multi-approach property valuation analysis"
+    columns:
+      - name: property_id
+        description: "Property identifier"
+        tests:
+          - not_null
+      - name: market_value_mid_point
+        description: "Market value using average cap rate"
+      - name: investment_quality_rating
+        description: "Quality rating based on cap rate performance"
+
+  - name: int_valuation_assumptions
+    description: "Centralized valuation assumptions and parameters"
+    columns:
+      - name: assumption_category
+        description: "Category of assumption (market_rates, portfolio_strategy, etc.)"
+      - name: assumption_name
+        description: "Name of the assumption"
+        tests:
+          - not_null
+      - name: assumption_value
+        description: "Value of the assumption"
+
+  - name: int_capex_reserves
+    description: "CapEx reserve management with interest earnings and cash flow integration"
+    columns:
+      - name: property_id
+        description: "Property identifier"
+        tests:
+          - not_null
+      - name: year
+        description: "Hold period year"
+        tests:
+          - not_null
+      - name: interest_income
+        description: "Annual interest earnings on reserve balances"
+      - name: capex_spent
+        description: "Actual capex expenditure for the year"
+      - name: available_for_capex
+        description: "Available reserve balance for capex projects"
+
+  - name: int_invested_metrics
+    description: "Investor equity contribution analysis with percentage calculations"
+    columns:
+      - name: investor_serial
+        description: "Unique investor identifier"
+        tests:
+          - not_null
+      - name: first_name
+        description: "Investor first name (or 'Personal Loan' for company loans)"
+      - name: last_name
+        description: "Investor last name (or investor_serial for personal loans)"
+      - name: equity_contributed
+        description: "Amount of equity contributed by investor"
+        tests:
+          - not_null
+      - name: percentage_of_investments
+        description: "Percentage of total equity pool contributed by this investor"
